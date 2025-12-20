@@ -20,6 +20,8 @@ enum OperationKind {
   OPERATION_DROP_COMPAT_VIEW     = 6;
   OPERATION_NEW_SATELLITE        = 7;
   OPERATION_ALTER_SATELLITE      = 8;
+  OPERATION_NEW_HUB              = 9;
+  OPERATION_NEW_LINK             = 10;
 }
 
 enum OperationStatus {
