@@ -5,6 +5,9 @@ from dotenv import load_dotenv
 env_type = os.getenv('ENV_TYPE', "local")
 load_dotenv(f".env.{env_type}")
 
+# Policy selection
+DEFAULT_POLICY_NAME = os.getenv("SEF_DEFAULT_POLICY", "production")
+
 LAKE_TYPE = os.getenv("LAKE_TYPE", "rdbms")
 PARQUET_PATH = os.getenv("PARQUET_PATH", "/opt/parquet_files")
 
@@ -26,8 +29,8 @@ RDBMS_SCHEMA = os.getenv("POSTGRES_SCHEMA", "public")
 
 # Kafka
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
-KAFKA_TOPIC_NOTIFICATIONS = os.getenv("KAFKA_TOPIC", "filewatcher.events")
-KAFKA_TOPIC_SCHEMA_EVOLVED = os.getenv("KAFKA_TOPIC", "schema.evolved")
+KAFKA_TOPIC_NOTIFICATIONS = os.getenv("KAFKA_TOPIC_NOTIFICATION", "filewatcher.events")
+KAFKA_TOPIC_SCHEMA_EVOLVED = os.getenv("KAFKA_TOPIC_SCHEMA_EVOLVED", "schema.evolved")
 KAFKA_STARTING_OFFSETS = os.getenv("KAFKA_STARTING_OFFSETS", "earliest")
 KAFKA_GROUP_ID = os.getenv("KAFKA_GROUP_ID", "sef_core")
 KAFKA_PARTITIONS = int(os.getenv("KAFKA_PARTITIONS", "8"))
