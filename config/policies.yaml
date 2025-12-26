@@ -1,0 +1,33 @@
+# Policy set for the Schema Evolution Framework (SEF).
+#
+# Each top-level key is a policy name. You can refer to it via:
+#   - env var SEF_DEFAULT_POLICY (e.g. "production", "sandbox")
+#   - or a metadata override (notification["metadata"]["policy"])
+#
+# Fields:
+#   allow_drop: bool                     # allow DROP_COLUMN changes?
+#   allow_change_type: bool              # allow CHANGE_TYPE changes?
+#   obligations_on_additive: [str...]    # obligations when only ADD_COLUMN changes detected
+#   compatibility_for_drop: string       # compatibility classification if drop is allowed
+#   compatibility_for_change_type: string
+
+# Production policy – conservative.
+production: &production
+  allow_drop: false
+  allow_change_type: true
+  obligations_on_additive:
+    - NEW_HUB
+    - NEW_LINK
+  compatibility_for_drop: breaking
+  compatibility_for_change_type: breaking
+
+# Sandbox / dev policy – permissive for experimentation.
+sandbox:
+  <<: *production
+  allow_drop: true
+  allow_change_type: true
+
+# Default policy, used when no explicit policy is selected.
+# By default, it is the same as production.
+default:
+  <<: *production
