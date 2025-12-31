@@ -57,7 +57,7 @@ def _fs_load_edges() -> List[Dict[str, Any]]:
 
 
 # ----------------- RDBMS -------------------------------------------------------------------
-def _db_ensure_schema(conm):
+def _db_ensure_schema(conn):
     """
         Ensure that the lineage tables exist.
         """
