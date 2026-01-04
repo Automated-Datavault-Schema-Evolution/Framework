@@ -14,12 +14,14 @@
 # Production policy – conservative.
 production: &production
   allow_drop: false
-  allow_change_type: true
+  allow_change_type: widen_only
+  compatibility_for_drop: breaking
+  compatibility_for_change_type: breaking
+  compatibility_for_change_type_widening: backward
   obligations_on_additive:
     - NEW_HUB
     - NEW_LINK
-  compatibility_for_drop: breaking
-  compatibility_for_change_type: breaking
+
 
 # Sandbox / dev policy – permissive for experimentation.
 sandbox:

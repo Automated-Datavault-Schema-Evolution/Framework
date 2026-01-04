@@ -164,7 +164,7 @@ def _db_load_edges() -> List[Dict[str, Any]]:
     conn = get_metastore_connection()
     try:
         _db_ensure_schema(conn)
-        with conn.cursor as cur:
+        with conn.cursor() as cur:
             cur.execute(
                 """
                 SELECT upstream_type,

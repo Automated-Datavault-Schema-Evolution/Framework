@@ -1,4 +1,4 @@
-import datetime
+from datetime import datetime
 from typing import Dict, Any
 
 from core.model import ChangeContext, PolicyOutcome, ExecutionResult, VerificationResult, Plan

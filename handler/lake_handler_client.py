@@ -7,6 +7,17 @@ from proto import sef_handlers_pb2 as pb
 from proto import sef_handlers_pb2_grpc as pb_grpc
 
 
+def _normalize_kind(kind: Any) -> int:
+    if isinstance(kind, int):
+        return kind
+    if not kind:
+        return pb.OPERATION_KIND_UNSPECIFIED
+    normalized = str(kind).upper()
+    if not normalized.startswith("OPERATION_"):
+        normalized = f"OPERATION_{normalized}"
+    return pb.OperationKind.Value(normalized)
+
+
 def create_stub() -> pb_grpc.LakeHandlerStub:
     channel = grpc.insecure_channel(LAKE_HANDLER_GRPC_TARGET)
     return pb_grpc.LakeHandlerStub(channel)
@@ -16,12 +27,12 @@ def apply_operations(stub: pb_grpc.LakeHandlerStub, operations: List[Dict[str, A
     pb_operations = []
     for operation in operations:
         pb_operations.append(
-            pb.Operations(
+            pb.Operation(
                 correlation_id=operation['correlation_id'],
                 plan_id=operation['plan_id'],
                 idempotency_key=operation['idempotency_key'],
                 layer=pb.LAYER_LAKE,
-                kind=operation['kind'],
+                kind=_normalize_kind(operation['kind']),
                 target=operation['target'],
                 params=operation.get("params", {}),
             )

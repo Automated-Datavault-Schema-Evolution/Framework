@@ -10,4 +10,5 @@ pyarrow
 fastparquet
 grpcio
 grpcio-tools
+PyYAML
 git+https://github.com/Automated-Datavault-Schema-Evolution/MyLogger.git@v0.2.1#egg=mylogger

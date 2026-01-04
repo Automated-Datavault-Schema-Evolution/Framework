@@ -172,15 +172,58 @@ def build_plan(
                 "plan_id": plan_id,
             }
             operations.append(vault_operation)
+        elif atom["kind"] == "CHANGE_TYPE":
+            to_type = atom.get("to_type")
 
-        # Other change kinds (DROP_COLUMN, CHANGE_TYPE, …) are currently
+            # Lake op
+            lake_params = {
+                "column_name": attribute,
+                "logical_type": to_type,  # back-compat key
+                "to_logical_type": to_type,  # explicit
+                "from_logical_type": atom.get("from_type"),
+            }
+            operations.append(
+                {
+                    "idempotency_key": _op_idempotency_key(
+                        dataset_id, "lake", "CHANGE_TYPE", dataset_id, lake_params
+                    ),
+                    "layer": "lake",
+                    "kind": "CHANGE_TYPE",
+                    "target": dataset_id,
+                    "params": lake_params,
+                    "correlation_id": correlation_id,
+                    "plan_id": plan_id,
+                }
+            )
+
+            # Vault op (optional, see note below)
+            vault_params = {
+                "column_name": attribute,
+                "logical_type": to_type,
+                "to_logical_type": to_type,
+                "from_logical_type": atom.get("from_type"),
+            }
+            operations.append(
+                {
+                    "idempotency_key": _op_idempotency_key(
+                        dataset_id, "vault", "CHANGE_TYPE", dataset_id, vault_params
+                    ),
+                    "layer": "vault",
+                    "kind": "CHANGE_TYPE",
+                    "target": dataset_id,
+                    "params": vault_params,
+                    "correlation_id": correlation_id,
+                    "plan_id": plan_id,
+                }
+            )
+        # Other change kinds (DROP_COLUMN, ...) are currently
         # blocked by default policy and therefore do not generate operations.
 
     # Checkpoints: one after each operation (simple linear plan)
     checkpoints = list(range(len(operations)))
 
     plan: Plan = {
-        "id": plan_id,
+        "plan_id": plan_id,
         "dataset_id": dataset_id,
         "correlation_id": correlation_id,
         "operations": operations,

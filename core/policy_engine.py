@@ -7,6 +7,47 @@ import yaml  # make sure PyYAML is in requirements.txt
 from core.model import ChangeAtom, PolicyOutcome
 
 
+def _normalize_logical_type(t: str | None) -> str:
+    if not t:
+        return "string"
+    s = str(t).strip().lower()
+    if "bool" in s:
+        return "boolean"
+    if "bigint" in s or "long" in s:
+        return "bigint"
+    if "int" in s:
+        return "integer"
+    if "double" in s or "float" in s or "real" in s:
+        return "float"
+    if "decimal" in s or "numeric" in s:
+        return "numeric"
+    if "timestamp" in s or "datetime" in s:
+        return "timestamp"
+    if s == "date" or ("date" in s and "time" not in s):
+        return "date"
+    return "string"
+
+
+def _is_widening_change(from_type: str | None, to_type: str | None) -> bool:
+    f = _normalize_logical_type(from_type)
+    t = _normalize_logical_type(to_type)
+
+    if f == t:
+        return True
+
+    widening = {
+        "boolean": {"string"},
+        "integer": {"bigint", "float", "numeric", "string"},
+        "bigint": {"float", "numeric", "string"},
+        "float": {"numeric", "string"},
+        "numeric": {"string"},
+        "date": {"timestamp", "string"},
+        "timestamp": {"string"},
+        "string": set(),
+    }
+    return t in widening.get(f, set())
+
+
 def _default_policies() -> Dict[str, Dict[str, Any]]:
     """
     Built-in fallback policy set used when we cannot load a YAML file.
@@ -112,6 +153,11 @@ def evaluate_policies(
     allow_drop = bool(policy_cfg.get("allow_drop", False))
     allow_change_type = bool(policy_cfg.get("allow_change_type", False))
 
+    allow_change_raw = policy_cfg.get("allow_change_type", False)
+    allow_change_mode = str(allow_change_raw).strip().lower()
+    allow_change_any = allow_change_mode in {"1", "true", "yes", "on"}
+    allow_change_widen_only = allow_change_mode in {"widen_only", "widen", "widening"}
+
     # DROP_COLUMN handling
     if has_drop and not allow_drop:
         return {
@@ -123,7 +169,7 @@ def evaluate_policies(
         }
 
     # CHANGE_TYPE handling
-    if has_change and not allow_change_type:
+    if has_change and not (allow_change_any or allow_change_widen_only):
         return {
             "decision": "block",
             "compatibility": "breaking",
@@ -131,6 +177,23 @@ def evaluate_policies(
             "reasons": ["CHANGE_TYPE not allowed by policy"],
             "policy_name": policy_name,
         }
+
+    if has_change and allow_change_widen_only:
+        non_widening = [
+            a for a in atoms
+            if a["kind"] == "CHANGE_TYPE" and not _is_widening_change(a.get("from_type"), a.get("to_type"))
+        ]
+        if non_widening:
+            details = ", ".join(
+                f"{a.get('attribute')}:{a.get('from_type')}->{a.get('to_type')}" for a in non_widening
+            )
+            return {
+                "decision": "block",
+                "compatibility": "breaking",
+                "obligations": [],
+                "reasons": [f"Non-widening CHANGE_TYPE blocked by policy: {details}"],
+                "policy_name": policy_name,
+            }
 
     # If destructive changes are allowed, we let them through but mark as breaking.
     if has_drop or has_change:
@@ -141,10 +204,10 @@ def evaluate_policies(
                 compatibility,
             )
         if has_change:
-            compatibility = policy_cfg.get(
-                "compatibility_for_change_type",
-                compatibility,
-            )
+            if allow_change_widen_only:
+                compatibility = policy_cfg.get("compatibility_for_change_type_widening", "backward")
+            else:
+                compatibility = policy_cfg.get("compatibility_for_change_type", compatibility)
 
         return {
             "decision": "allow",

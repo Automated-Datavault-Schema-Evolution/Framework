@@ -2,7 +2,9 @@ from typing import Dict, Any
 
 from logger import log
 
+from config.config import DEFAULT_POLICY_NAME
 from core import change_director, impact_analyzer, policy_engine, publisher, migration_planner, executor, verifier
+from handler import vault_handler_client
 from helper import metadata_helper, kafka_helper
 
 
@@ -51,7 +53,7 @@ def process_notification(
 
     # 3) Policy evaluation (multi-policy based on metadata / env)
     metadata = notification.get("metadata", {}) or {}
-    policy_name = metadata.get("policy") or cfg.DEFAULT_POLICY_NAME
+    policy_name = metadata.get("policy") or DEFAULT_POLICY_NAME
 
     policy = policy_engine.evaluate_policies(
         atoms=atoms,
@@ -76,7 +78,7 @@ def process_notification(
             reason="policy_denied",
             details="; ".join(policy.get("reasons", [])),
         )
-        kafka_helper.publish_schema_evolved(kafka_producer, failure_event)
+        kafka_helper.publish_schema_failed(kafka_producer, failure_event)
         return
 
     # 4) Plan construction
@@ -86,6 +88,44 @@ def process_notification(
         atoms=atoms,
         policy=policy,
     )
+
+    # Only keep NEW_LINK if DV reports candidates exist.
+    #         If discovery fails transiently (lake table not yet present), keep it.
+    ops = list(plan.get("operations", []))
+    new_link_ops = [
+        op for op in ops
+        if op.get("layer") == "vault" and op.get("kind") == "NEW_LINK" and op.get("target") == dataset_id
+    ]
+    if new_link_ops:
+        probe = vault_handler_client.probe_link_candidates(
+            vault_stub,
+            correlation_id=context["correlation_id"],
+            plan_id=plan["plan_id"],
+            table_name=dataset_id,
+        )
+
+        if probe.get("error_code"):
+            log.warning(
+                "[SEF_CORE][PIPELINE] Link probe failed for dataset %s (error_code=%s). "
+                "Keeping NEW_LINK in plan to allow retries once lake table exists. Details: %s",
+                dataset_id,
+                probe.get("error_code"),
+                probe.get("error_message"),
+            )
+        else:
+            if not probe.get("candidates"):
+                log.info(
+                    "[SEF_CORE][PIPELINE] No link candidates for dataset %s. Removing NEW_LINK from plan.",
+                    dataset_id,
+                )
+                plan["operations"] = [op for op in ops if op not in new_link_ops]
+            else:
+                log.info(
+                    "[SEF_CORE][PIPELINE] Link probe found %d candidate(s) for dataset %s. Keeping NEW_LINK.",
+                    len(probe["candidates"]),
+                    dataset_id,
+                )
+
     metadata_helper.store_plan(plan)
 
     # Execution via gRPC handlers
