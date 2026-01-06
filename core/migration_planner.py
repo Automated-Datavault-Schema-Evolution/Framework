@@ -216,8 +216,47 @@ def build_plan(
                     "plan_id": plan_id,
                 }
             )
-        # Other change kinds (DROP_COLUMN, ...) are currently
-        # blocked by default policy and therefore do not generate operations.
+        # DROP_COLUMN IS blocked by the default policy, but implemented nevertheless for sandbox
+        elif atom["kind"] == "DROP_COLUMN":
+            # Lake op
+            lake_params = {
+                "column_name": attribute,
+                "logical_type": atom.get("from_type"),  # back-compat
+                "from_logical_type": atom.get("from_type"),
+            }
+            operations.append(
+                {
+                    "idempotency_key": _op_idempotency_key(
+                        dataset_id, "lake", "DROP_COLUMN", dataset_id, lake_params
+                    ),
+                    "layer": "lake",
+                    "kind": "DROP_COLUMN",
+                    "target": dataset_id,
+                    "params": lake_params,
+                    "correlation_id": correlation_id,
+                    "plan_id": plan_id,
+                }
+            )
+
+            # Vault op (non-destructive; the vault handler creates a side-by-side variant)
+            vault_params = {
+                "column_name": attribute,
+                "logical_type": atom.get("from_type"),
+                "from_logical_type": atom.get("from_type"),
+            }
+            operations.append(
+                {
+                    "idempotency_key": _op_idempotency_key(
+                        dataset_id, "vault", "DROP_COLUMN", dataset_id, vault_params
+                    ),
+                    "layer": "vault",
+                    "kind": "DROP_COLUMN",
+                    "target": dataset_id,
+                    "params": vault_params,
+                    "correlation_id": correlation_id,
+                    "plan_id": plan_id,
+                }
+            )
 
     # Checkpoints: one after each operation (simple linear plan)
     checkpoints = list(range(len(operations)))
