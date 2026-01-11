@@ -1,19 +1,6 @@
 ### Python template
-.idea
-*.csv
-.venv
-*.env.*
-/artifacts
-!/models
-*.json
-*.parquet
 
-!/target/
-!/logs/
-!/metastore_db/
-!/data/
-!/meta/
-!/control
+.e2e
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -139,7 +126,6 @@ celerybeat.pid
 *.sage.py
 
 # Environments
-.env
 .venv
 env/
 venv/
@@ -178,6 +164,5 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
-!/artifacts/
-!/meta/
-!/.e2e/
+/templates/
+/README.md
