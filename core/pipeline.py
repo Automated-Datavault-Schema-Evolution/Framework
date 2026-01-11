@@ -107,11 +107,12 @@ def process_notification(
         if probe.get("error_code"):
             log.warning(
                 "[SEF_CORE][PIPELINE] Link probe failed for dataset %s (error_code=%s). "
-                "Keeping NEW_LINK in plan to allow retries once lake table exists. Details: %s",
+                "Dropping NEW_LINK from plan to avoid a permanent error. Details: %s",
                 dataset_id,
                 probe.get("error_code"),
                 probe.get("error_message"),
             )
+            plan["operations"] = [op for op in ops if op not in new_link_ops]
         else:
             if not probe.get("candidates"):
                 log.info(

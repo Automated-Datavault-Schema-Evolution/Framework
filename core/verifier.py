@@ -22,7 +22,7 @@ def verify(plan: Plan, execution: ExecutionResult, lake_stub: Any, vault_stub: A
     # Live introspection for lake
     try:
         lake_evidence = lake_handler_client.introspect_evidence(lake_stub, correlation_id, plan_id, plan["dataset_id"])
-        log.info(f"[SEF_CORE][VERIFIER] Lake introspection returned {len(lake_evidence["tables"])} tables")
+        log.info(f"[SEF_CORE][VERIFIER] Lake introspection returned {len(lake_evidence['tables'])} tables")
     except Exception as e:
         issues.append(f"Lake introspection failed: {e}")
         log.error(f"[SEF_CORE][VERIFIER] Lake introspection failed: {e}")
