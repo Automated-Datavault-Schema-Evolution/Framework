@@ -84,6 +84,7 @@ PROCESSING_MODE = os.getenv("PROCESSING_MODE", "streaming")
 # Handler gRPC endpoints (TODO: change to default docker network names and ports)
 LAKE_HANDLER_GRPC_TARGET = os.getenv("LAKE_HANDLER_GRPC_TARGET", "DataLakeIngestionHandler:50051")
 VAULT_HANDLER_GRPC_TARGET = os.getenv("VAULT_HANDLER_GRPC_TARGET", "DatavaultIngestionHandler:50052")
+GRPC_TIMEOUT_S = int(os.getenv("GRPC_TIMEOUT_S", 200))
 
 # DBT
 DBT_PROJECT_DIR = os.getenv("DBT_PROJECT_DIR", "/opt/dbt")

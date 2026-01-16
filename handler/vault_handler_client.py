@@ -2,7 +2,7 @@ from typing import Any, Dict, List
 
 import grpc
 
-from config.config import VAULT_HANDLER_GRPC_TARGET
+from config.config import VAULT_HANDLER_GRPC_TARGET, GRPC_TIMEOUT_S
 from proto import sef_handlers_pb2 as pb
 from proto import sef_handlers_pb2_grpc as pb_grpc
 
@@ -38,7 +38,7 @@ def apply_operations(stub: pb_grpc.VaultHandlerStub, operations: List[Dict[str, 
             )
         )
     request = pb.OperationBatch(operations=pb_operations)
-    response: pb.OperationBatchResult = stub.ApplyOperations(request)
+    response: pb.OperationBatchResult = stub.ApplyOperations(request, timeout=GRPC_TIMEOUT_S)
 
     results: List[Dict[str, Any]] = []
     for result in response.results:
@@ -64,7 +64,7 @@ def introspect_evidence(stub: pb_grpc.VaultHandlerStub, correlation_id: str, pla
         plan_id=plan_id,
         dataset_id=dataset_id,
     )
-    response: pb.EvidenceResponse = stub.IntrospectEvidence(request)
+    response: pb.EvidenceResponse = stub.IntrospectEvidence(request, timeout=GRPC_TIMEOUT_S)
     return {
         "correlation_id": response.correlation_id,
         "plan_id": response.plan_id,
@@ -93,7 +93,7 @@ def probe_link_candidates(
         table_name=table_name,
         fk_filter=fk_filter or "",
     )
-    response: pb.LinkProbeResponse = stub.ProbeLinkCandidates(request)
+    response: pb.LinkProbeResponse = stub.ProbeLinkCandidates(request, timeout=GRPC_TIMEOUT_S)
     return {
         "correlation_id": response.correlation_id,
         "plan_id": response.plan_id,

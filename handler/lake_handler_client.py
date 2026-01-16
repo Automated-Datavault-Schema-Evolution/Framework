@@ -2,7 +2,7 @@ from typing import Dict, Any, List
 
 import grpc
 
-from config.config import LAKE_HANDLER_GRPC_TARGET
+from config.config import LAKE_HANDLER_GRPC_TARGET, GRPC_TIMEOUT_S
 from proto import sef_handlers_pb2 as pb
 from proto import sef_handlers_pb2_grpc as pb_grpc
 
@@ -38,7 +38,7 @@ def apply_operations(stub: pb_grpc.LakeHandlerStub, operations: List[Dict[str, A
             )
         )
     request = pb.OperationBatch(operations=pb_operations)
-    response: pb.OperationBatchResult = stub.ApplyOperations(request)
+    response: pb.OperationBatchResult = stub.ApplyOperations(request, timeout=GRPC_TIMEOUT_S)
 
     results: List[Dict[str, Any]] = []
     for result in response.results:
@@ -64,7 +64,7 @@ def introspect_evidence(stub: pb_grpc.LakeHandlerStub, correlation_id: str, plan
         plan_id=plan_id,
         dataset_id=dataset_id
     )
-    response: pb.EvidenceResponse = stub.IntrospectEvidence(request)
+    response: pb.EvidenceResponse = stub.IntrospectEvidence(request, timeout=GRPC_TIMEOUT_S)
     return {
         "correlation_id": response.correlation_id,
         "plan_id": response.plan_id,

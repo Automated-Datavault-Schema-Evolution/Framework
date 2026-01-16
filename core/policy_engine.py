@@ -123,17 +123,9 @@ def evaluate_policies(
     """
     Evaluate schema changes against a named policy.
 
-    Policy configuration (per policy_name):
-
-        allow_drop: bool
-        allow_change_type: bool
-        obligations_on_additive: List[str]
-        compatibility_for_drop: "backward" | "breaking" | ...
-        compatibility_for_change_type: "backward" | "breaking" | ...
-
-    This preserves your original behaviour for 'production' / 'default':
-      - DROP_COLUMN / CHANGE_TYPE -> block
-      - ADD_COLUMN only -> allow + obligations NEW_HUB / NEW_LINK
+    Key improvement:
+      - If CHANGE_TYPE changes are widening only, classify as backward-compatible
+        (unless policy blocks CHANGE_TYPE entirely).
     """
     policy_cfg = _get_policy_cfg(policy_name)
 
@@ -147,16 +139,27 @@ def evaluate_policies(
             "policy_name": policy_name,
         }
 
-    has_drop = any(a["kind"] == "DROP_COLUMN" for a in atoms)
-    has_change = any(a["kind"] == "CHANGE_TYPE" for a in atoms)
+    has_drop = any(a.get("kind") == "DROP_COLUMN" for a in atoms)
+    has_change = any(a.get("kind") == "CHANGE_TYPE" for a in atoms)
+    only_additive = all(a.get("kind") == "ADD_COLUMN" for a in atoms)
 
     allow_drop = bool(policy_cfg.get("allow_drop", False))
-    allow_change_type = bool(policy_cfg.get("allow_change_type", False))
 
+    # allow_change_type may be bool or a string mode ("widen_only")
     allow_change_raw = policy_cfg.get("allow_change_type", False)
-    allow_change_mode = str(allow_change_raw).strip().lower()
-    allow_change_any = allow_change_mode in {"1", "true", "yes", "on"}
-    allow_change_widen_only = allow_change_mode in {"widen_only", "widen", "widening"}
+    allow_change_any = False
+    allow_change_widen_only = False
+    if isinstance(allow_change_raw, bool):
+        allow_change_any = allow_change_raw
+    else:
+        mode = str(allow_change_raw).strip().lower()
+        allow_change_any = mode in {"1", "true", "yes", "on"}
+        allow_change_widen_only = mode in {"widen_only", "widen", "widening"}
+
+    change_atoms = [a for a in atoms if a.get("kind") == "CHANGE_TYPE"]
+    widening_only = bool(change_atoms) and all(
+        _is_widening_change(a.get("from_type"), a.get("to_type")) for a in change_atoms
+    )
 
     # DROP_COLUMN handling
     if has_drop and not allow_drop:
@@ -178,51 +181,49 @@ def evaluate_policies(
             "policy_name": policy_name,
         }
 
-    if has_change and allow_change_widen_only:
-        non_widening = [
-            a for a in atoms
-            if a["kind"] == "CHANGE_TYPE" and not _is_widening_change(a.get("from_type"), a.get("to_type"))
-        ]
-        if non_widening:
-            details = ", ".join(
-                f"{a.get('attribute')}:{a.get('from_type')}->{a.get('to_type')}" for a in non_widening
-            )
-            return {
-                "decision": "block",
-                "compatibility": "breaking",
-                "obligations": [],
-                "reasons": [f"Non-widening CHANGE_TYPE blocked by policy: {details}"],
-                "policy_name": policy_name,
-            }
-
-    # If destructive changes are allowed, we let them through but mark as breaking.
-    if has_drop or has_change:
-        compatibility = "breaking"
-        if has_drop:
-            compatibility = policy_cfg.get(
-                "compatibility_for_drop",
-                compatibility,
-            )
-        if has_change:
-            if allow_change_widen_only:
-                compatibility = policy_cfg.get("compatibility_for_change_type_widening", "backward")
-            else:
-                compatibility = policy_cfg.get("compatibility_for_change_type", compatibility)
-
+    if has_change and allow_change_widen_only and not widening_only:
+        details = ", ".join(
+            f"{a.get('attribute')}:{a.get('from_type')}->{a.get('to_type')}" for a in change_atoms
+            if not _is_widening_change(a.get("from_type"), a.get("to_type"))
+        )
         return {
-            "decision": "allow",
-            "compatibility": compatibility,
+            "decision": "block",
+            "compatibility": "breaking",
             "obligations": [],
-            "reasons": ["Destructive changes allowed by policy"],
+            "reasons": [f"Non-widening CHANGE_TYPE blocked by policy: {details}"],
             "policy_name": policy_name,
         }
 
-    # Only additive changes (ADD_COLUMN etc.)
-    obligations: List[str] = policy_cfg.get("obligations_on_additive", [])
+    # If only additive changes: allow + obligations
+    if only_additive:
+        obligations: List[str] = policy_cfg.get("obligations_on_additive", [])
+        return {
+            "decision": "allow",
+            "compatibility": "backward",
+            "obligations": obligations,
+            "reasons": ["Only additive changes detected"],
+            "policy_name": policy_name,
+        }
+
+    # Otherwise: allowed but compatibility depends on what happened
+    compatibility = "breaking"
+    reasons: List[str] = ["Destructive changes allowed by policy"]
+
+    if has_drop:
+        compatibility = policy_cfg.get("compatibility_for_drop", compatibility)
+
+    if has_change:
+        # IMPORTANT: widening-only type changes are backward compatible
+        if widening_only:
+            compatibility = policy_cfg.get("compatibility_for_change_type_widening", "backward")
+            reasons = ["Only widening CHANGE_TYPE detected"]
+        else:
+            compatibility = policy_cfg.get("compatibility_for_change_type", compatibility)
+
     return {
         "decision": "allow",
-        "compatibility": "backward",
-        "obligations": obligations,
-        "reasons": ["Only additive changes detected"],
+        "compatibility": compatibility,
+        "obligations": [],
+        "reasons": reasons,
         "policy_name": policy_name,
     }

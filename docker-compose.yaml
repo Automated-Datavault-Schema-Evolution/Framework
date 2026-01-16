@@ -5,7 +5,7 @@ services:
       dockerfile: Dockerfile
     container_name: SchemaEvolutionFramework
     env_file:
-      - ./.env
+      - .env
     networks:
       - data-automation-net
     volumes:
@@ -18,6 +18,12 @@ services:
       - ./hive-site.xml:/opt/spark/conf/hive-site.xml:ro
     ports:
       - "4043:4043"
+    environment:
+      SEF_DEBUG_KAFKA_PAYLOAD: "1"
+      SEF_DEBUG_TRACE: "1"
+      SEF_DEBUG_KAFKA_PAYLOAD_MAX_CHARS: "20000"
+      SEF_DEBUG_TRACE_MAX_CHARS: "20000"
+      SEF_DEFAULT_POLICY: ${SEF_DEFAULT_POLICY:-production}
     depends_on:
       sef-spark-master:
         condition: service_healthy
@@ -42,6 +48,8 @@ services:
       - SPARK_NO_DAEMONIZE=1
       - SPARK_LOG_DIR=/tmp/spark/logs
       - SPARK_PID_DIR=/tmp/spark/pids
+    env_file:
+      - .env
     command:
       - /bin/bash
       - -lc
@@ -78,6 +86,8 @@ services:
     depends_on:
       sef-spark-master:
         condition: service_healthy
+    env_file:
+      - .env
     environment:
       - SPARK_WORKER_MEMORY=4g
       - SPARK_WORKER_CORES=4
@@ -124,6 +134,8 @@ services:
     depends_on:
       sef-spark-master:
         condition: service_healthy
+    env_file:
+      - .env
     environment:
       - SPARK_WORKER_MEMORY=4g
       - SPARK_WORKER_CORES=4

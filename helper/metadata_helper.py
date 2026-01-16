@@ -1,9 +1,13 @@
+# apps/SchemaEvolutionFramework/helper/metadata_helper.py
+
 import datetime
 import json
+import os
 from pathlib import Path
 from typing import Optional, Dict, Any
 
 from logger import log
+from psycopg2 import sql
 from psycopg2._json import Json
 
 from config.config import LAKE_TYPE
@@ -19,24 +23,23 @@ def _fs_root() -> Path:
 
 def _fs_dataset_dir(dataset_id: str) -> Path:
     safe = dataset_id.replace("/", "_").replace(":", "_")
-    dir = _fs_root() / "datasets" / safe
-    dir.mkdir(parents=True, exist_ok=True)
-    return dir
+    d = _fs_root() / "datasets" / safe
+    d.mkdir(parents=True, exist_ok=True)
+    return d
 
 
 def _fs_load_latest_schema(dataset_id: str) -> Optional[Dict[str, Any]]:
-    dir = _fs_dataset_dir(dataset_id)
-    index = dir / "schema_index.json"
+    d = _fs_dataset_dir(dataset_id)
+    index = d / "schema_index.json"
     if not index.exists():
         return None
-
     with index.open() as f:
         return json.load(f)
 
 
 def _fs_store_schema_version(dataset_id: str, header: Dict[str, Any], correlation_id: str) -> int:
-    dir = _fs_dataset_dir(dataset_id)
-    index = dir / "schema_index.json"
+    d = _fs_dataset_dir(dataset_id)
+    index = d / "schema_index.json"
     if index.exists():
         with index.open() as f:
             data = json.load(f)
@@ -49,142 +52,164 @@ def _fs_store_schema_version(dataset_id: str, header: Dict[str, Any], correlatio
         "version": version,
         "header": header,
         "correlation_id": correlation_id,
-        "stored_at": datetime.utcnow().isoformat() + "Z",
+        "stored_at": datetime.datetime.utcnow().isoformat() + "Z",
     }
 
-    with (dir / f"schema_{version}.json").open("w") as f:
+    with (d / f"schema_{version}.json").open("w") as f:
         json.dump(record, f, indent=2)
-    with index.open() as f:
+    with index.open("w") as f:
         json.dump(record, f, indent=2)
 
     return version
 
 
 def _fs_store_generic(subdir: str, key: str, payload: Dict[str, Any]):
-    dir = _fs_root() / subdir
-    dir.mkdir(parents=True, exist_ok=True)
-    with (dir / f"{key}.json").open("w") as f:
+    d = _fs_root() / subdir
+    d.mkdir(parents=True, exist_ok=True)
+    with (d / f"{key}.json").open("w") as f:
         json.dump(payload, f, indent=2)
 
 
 # ----------------- RDBMS -------------------------------------------------------------------
-def _ensure_db_schema(conn):
-    # TODO: refacor to execute statements stored in files!!
+SEF_METASTORE_SCHEMA = os.getenv("SEF_METASTORE_SCHEMA", "metastore")
+
+
+def _qname(schema_name: str, table_name: str) -> sql.SQL:
+    return sql.SQL("{}.{}").format(sql.Identifier(schema_name), sql.Identifier(table_name))
+
+
+def _ensure_db_schema(conn) -> None:
+    schema = SEF_METASTORE_SCHEMA
     with conn.cursor() as cur:
+        cur.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS {}").format(sql.Identifier(schema)))
+        cur.execute(sql.SQL("SET search_path TO {}, public").format(sql.Identifier(schema)))
+
         cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS sef_schema_versions
-            (
-                dataset_id
-                TEXT
-                NOT
-                NULL,
-                version
-                INTEGER
-                NOT
-                NULL,
-                header_json
-                JSONB
-                NOT
-                NULL,
-                correlation_id
-                TEXT,
-                stored_at
-                TIMESTAMPTZ
-                NOT
-                NULL,
-                PRIMARY
-                KEY
-            (
-                dataset_id,
-                version
-            )
+            sql.SQL(
+                """
+                CREATE TABLE IF NOT EXISTS {}
+                (
+                    dataset_id
+                    TEXT
+                    NOT
+                    NULL,
+                    version
+                    INTEGER
+                    NOT
+                    NULL,
+                    header_json
+                    JSONB
+                    NOT
+                    NULL,
+                    correlation_id
+                    TEXT,
+                    stored_at
+                    TIMESTAMPTZ
+                    NOT
+                    NULL,
+                    PRIMARY
+                    KEY
+                (
+                    dataset_id,
+                    version
+                )
+                    );
+                """
+            ).format(_qname(schema, "sef_schema_versions"))
+        )
+
+        cur.execute(
+            sql.SQL(
+                """
+                CREATE TABLE IF NOT EXISTS {}
+                (
+                    plan_id
+                    TEXT
+                    PRIMARY
+                    KEY,
+                    dataset_id
+                    TEXT
+                    NOT
+                    NULL,
+                    correlation_id
+                    TEXT
+                    NOT
+                    NULL,
+                    plan_json
+                    JSONB
+                    NOT
+                    NULL,
+                    created_at
+                    TIMESTAMPTZ
+                    NOT
+                    NULL
                 );
-            """
+                """
+            ).format(_qname(schema, "sef_plans"))
         )
+
         cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS sef_plans
-            (
-                plan_id
-                TEXT
-                PRIMARY
-                KEY,
-                dataset_id
-                TEXT
-                NOT
-                NULL,
-                correlation_id
-                TEXT
-                NOT
-                NULL,
-                plan_json
-                JSONB
-                NOT
-                NULL,
-                created_at
-                TIMESTAMPTZ
-                NOT
-                NULL
-            );
-            """
+            sql.SQL(
+                """
+                CREATE TABLE IF NOT EXISTS {}
+                (
+                    plan_id
+                    TEXT
+                    NOT
+                    NULL,
+                    correlation_id
+                    TEXT
+                    NOT
+                    NULL,
+                    execution_json
+                    JSONB
+                    NOT
+                    NULL,
+                    stored_at
+                    TIMESTAMPTZ
+                    NOT
+                    NULL,
+                    PRIMARY
+                    KEY
+                (
+                    plan_id
+                )
+                    );
+                """
+            ).format(_qname(schema, "sef_executions"))
         )
+
         cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS sef_executions
-            (
-                plan_id
-                TEXT
-                NOT
-                NULL,
-                correlation_id
-                TEXT
-                NOT
-                NULL,
-                execution_json
-                JSONB
-                NOT
-                NULL,
-                stored_at
-                TIMESTAMPTZ
-                NOT
-                NULL,
-                PRIMARY
-                KEY
-            (
-                plan_id
-            )
-                );
-            """
+            sql.SQL(
+                """
+                CREATE TABLE IF NOT EXISTS {}
+                (
+                    plan_id
+                    TEXT
+                    NOT
+                    NULL,
+                    correlation_id
+                    TEXT
+                    NOT
+                    NULL,
+                    verification_json
+                    JSONB
+                    NOT
+                    NULL,
+                    stored_at
+                    TIMESTAMPTZ
+                    NOT
+                    NULL,
+                    PRIMARY
+                    KEY
+                (
+                    plan_id
+                )
+                    );
+                """
+            ).format(_qname(schema, "sef_verifications"))
         )
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS sef_verifications
-            (
-                plan_id
-                TEXT
-                NOT
-                NULL,
-                correlation_id
-                TEXT
-                NOT
-                NULL,
-                verification_json
-                JSONB
-                NOT
-                NULL,
-                stored_at
-                TIMESTAMPTZ
-                NOT
-                NULL,
-                PRIMARY
-                KEY
-            (
-                plan_id
-            )
-                );
-            """
-        )
+    conn.commit()
 
 
 def _db_load_latest_schema(dataset_id: str) -> Optional[Dict[str, Any]]:
@@ -221,7 +246,6 @@ def _db_store_schema_version(dataset_id: str, header: Dict[str, Any], correlatio
     try:
         _ensure_db_schema(conn)
         with conn.cursor() as cur:
-            # Determine next version
             cur.execute(
                 "SELECT COALESCE(MAX(version), 0) FROM sef_schema_versions WHERE dataset_id = %s;",
                 (dataset_id,),
@@ -236,7 +260,12 @@ def _db_store_schema_version(dataset_id: str, header: Dict[str, Any], correlatio
                 """,
                 (dataset_id, version, Json(header), correlation_id),
             )
-            return version
+
+        conn.commit()
+        return version
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         release_metastore_connection(conn)
 
@@ -253,13 +282,12 @@ def _db_store_plan(plan: Dict[str, Any]):
                 UPDATE
                     SET plan_json = EXCLUDED.plan_json;
                 """,
-                (
-                    plan["plan_id"],
-                    plan.get("dataset_id"),
-                    plan.get("correlation_id"),
-                    Json(plan),
-                ),
+                (plan["plan_id"], plan.get("dataset_id"), plan.get("correlation_id"), Json(plan)),
             )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         release_metastore_connection(conn)
 
@@ -276,12 +304,12 @@ def _db_store_execution_results(result: Dict[str, Any]):
                 UPDATE
                     SET execution_json = EXCLUDED.execution_json;
                 """,
-                (
-                    result["plan_id"],
-                    result.get("correlation_id"),
-                    Json(result),
-                ),
+                (result["plan_id"], result.get("correlation_id"), Json(result)),
             )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         release_metastore_connection(conn)
 
@@ -298,41 +326,32 @@ def _db_store_verification_result(verification: Dict[str, Any]):
                 UPDATE
                     SET verification_json = EXCLUDED.verification_json;
                 """,
-                (
-                    verification["plan_id"],
-                    verification.get("correlation_id"),
-                    Json(verification),
-                ),
+                (verification["plan_id"], verification.get("correlation_id"), Json(verification)),
             )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         release_metastore_connection(conn)
 
 
 def load_latest_schema(dataset_id: str) -> Optional[Dict[str, Any]]:
-    """
-    Returns the latest schema record of None if unknown
-    Dispatches RDBMS or filesystem based on LAKE_TYPE
-    """
     if LAKE_TYPE == "rdbms":
         return _db_load_latest_schema(dataset_id)
     elif LAKE_TYPE == "parquet":
         return _fs_load_latest_schema(dataset_id)
-    else:
-        log.error(f"[METASTORE] Unknown lake type: {LAKE_TYPE}")
-        return None
+    log.error(f"[METASTORE] Unknown lake type: {LAKE_TYPE}")
+    return None
 
 
 def store_schema_version(dataset_id: str, header: Dict[str, Any], correlation_id: str) -> int:
-    """
-    Store a new schema version and return the new version number.
-    """
     if LAKE_TYPE == "rdbms":
         return _db_store_schema_version(dataset_id, header, correlation_id)
     elif LAKE_TYPE == "parquet":
         return _fs_store_schema_version(dataset_id, header, correlation_id)
-    else:
-        log.error(f"[METASTORE] Unknown lake type: {LAKE_TYPE}")
-        return None
+    log.error(f"[METASTORE] Unknown lake type: {LAKE_TYPE}")
+    raise RuntimeError(f"Unknown lake type: {LAKE_TYPE}")
 
 
 def store_execution_result(result: Dict[str, Any]):
@@ -340,9 +359,8 @@ def store_execution_result(result: Dict[str, Any]):
         return _db_store_execution_results(result)
     elif LAKE_TYPE == "parquet":
         return _fs_store_generic(subdir="executions", key=result["plan_id"], payload=result)
-    else:
-        log.error(f"[METASTORE] Unknown lake type: {LAKE_TYPE}")
-        return None
+    log.error(f"[METASTORE] Unknown lake type: {LAKE_TYPE}")
+    raise RuntimeError(f"Unknown lake type: {LAKE_TYPE}")
 
 
 def store_plan(plan: Dict[str, Any]):
@@ -350,9 +368,8 @@ def store_plan(plan: Dict[str, Any]):
         return _db_store_plan(plan)
     elif LAKE_TYPE == "parquet":
         return _fs_store_generic(subdir="plan", key=plan["plan_id"], payload=plan)
-    else:
-        log.error(f"[METASTORE] Unknown lake type: {LAKE_TYPE}")
-        return None
+    log.error(f"[METASTORE] Unknown lake type: {LAKE_TYPE}")
+    raise RuntimeError(f"Unknown lake type: {LAKE_TYPE}")
 
 
 def store_verification_result(verification: Dict[str, Any]):
@@ -360,6 +377,5 @@ def store_verification_result(verification: Dict[str, Any]):
         return _db_store_verification_result(verification)
     elif LAKE_TYPE == "parquet":
         return _fs_store_generic(subdir="verification", key=verification["plan_id"], payload=verification)
-    else:
-        log.error(f"[METASTORE] Unknown lake type: {LAKE_TYPE}")
-        return None
+    log.error(f"[METASTORE] Unknown lake type: {LAKE_TYPE}")
+    raise RuntimeError(f"Unknown lake type: {LAKE_TYPE}")

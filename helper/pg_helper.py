@@ -41,16 +41,10 @@ def _ensure_metastore_db():
             )
             bootstrap_conn.autocommit = True
             with bootstrap_conn.cursor() as cur:
-                cur.execute(
-                    sql.SQL("CREATE DATABASE {}").format(
-                        sql.Identifier(METASTORE_DB)
-                    )
-                )
+                cur.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(METASTORE_DB)))
             log.info(f"Metastore database '{METASTORE_DB}' created.")
         except Exception as create_exc:
-            log.error(
-                f"Failed creating metastore database '{METASTORE_DB}': {create_exc}"
-            )
+            log.error(f"Failed creating metastore database '{METASTORE_DB}': {create_exc}")
             raise
         finally:
             if bootstrap_conn:
@@ -77,9 +71,7 @@ def init_metastore_pool(minconn=None, maxconn=None) -> SimpleConnectionPool:
                 user=METASTORE_DB_USER,
                 password=METASTORE_DB_PASSWORD,
             )
-            log.info(
-                f"[METASTORE][RDBMS] Metastore connection pool created (min={minconn}, max={maxconn})."
-            )
+            log.info(f"[METASTORE][RDBMS] Metastore connection pool created (min={minconn}, max={maxconn}).")
         except Exception as e:
             log.error(f"[METASTORE][RDBMS] Error establishing metastore connection pool: {e}")
             raise
@@ -88,7 +80,7 @@ def init_metastore_pool(minconn=None, maxconn=None) -> SimpleConnectionPool:
     return METASTORE_POOL
 
 
-def get_metastore_connection() -> SimpleConnectionPool:
+def get_metastore_connection():
     """Get a connection from the metastore pool."""
     pool = init_metastore_pool()
     try:
@@ -97,22 +89,32 @@ def get_metastore_connection() -> SimpleConnectionPool:
             log.warning("[METASTORE][RDBMS] Received closed connection from pool; replacing it.")
             pool.putconn(conn, close=True)
             conn = pool.getconn()
+
+        # psycopg2 defaults to autocommit=False, which caused metastore writes to stay uncommitted.
+        try:
+            conn.autocommit = True
+        except Exception:
+            pass
+
         log.debug("[METASTORE][RDBMS] Acquired connection from metastore pool.")
         return conn
     except Exception as e:
         msg = str(e)
         if "connection pool exhausted" in msg.lower():
             new_max = pool.maxconn + 5
-            log.warning(
-                f"[METASTORE][RDBMS] Metastore connection pool exhausted. Expanding pool to {new_max}."
-            )
+            log.warning(f"[METASTORE][RDBMS] Metastore connection pool exhausted. Expanding pool to {new_max}.")
             try:
                 pool.closeall()
             except Exception:
                 pass
             init_metastore_pool(pool.minconn, new_max)
             pool = METASTORE_POOL
-            return pool.getconn()
+            conn = pool.getconn()
+            try:
+                conn.autocommit = True
+            except Exception:
+                pass
+            return conn
         log.error(f"[METASTORE][RDBMS] Error getting metastore connection: {e}")
         raise
 
@@ -125,6 +127,12 @@ def release_metastore_connection(conn):
             pool.putconn(conn, close=True)
             log.debug("[METASTORE][RDBMS] Closed dead metastore connection from pool.")
         else:
+            # If anyone ever turned autocommit off and left a transaction open, reset it.
+            try:
+                if not getattr(conn, "autocommit", True):
+                    conn.rollback()
+            except Exception:
+                pass
             pool.putconn(conn)
             log.debug("[METASTORE][RDBMS] Released metastore connection back to pool.")
     except Exception as e:

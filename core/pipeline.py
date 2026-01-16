@@ -35,11 +35,30 @@ def process_notification(
 
     latest = metadata_helper.load_latest_schema(dataset_id)
     previous_header = latest["header"] if latest else None
+    current_version = int(latest["version"]) if latest and latest.get("version") is not None else None
 
     context = change_director.build_change_context(
         notification=notification,
         previous_header=previous_header,
     )
+
+    # CRITICAL FIX:
+    # FileWatcher sets previous_schema_version=null. Tests (and correct semantics) expect
+    # previous_version to reflect the metastore version on drift events.
+    if context.get("previous_version") is None and current_version is not None:
+        context["previous_version"] = current_version
+
+    # Keep trace logging granular; add the derived value to make future failures obvious.
+    try:
+        log.info(
+            "[SEF_CORE][TRACE] dataset_id=%s producer_previous_schema_version=%s current_version=%s derived_previous_version=%s",
+            dataset_id,
+            notification.get("previous_schema_version"),
+            current_version,
+            context.get("previous_version"),
+        )
+    except Exception:
+        pass
 
     # 2) Diff + impact
     atoms = impact_analyzer.diff_headers(
@@ -60,12 +79,10 @@ def process_notification(
         impact=impact,
         policy_name=policy_name,
     )
-    # Optionally attach atoms for publisher/introspection
     policy["atoms"] = atoms
 
     log.info(
-        "[SEF_CORE][PIPELINE] Policy '%s' decision for dataset %s: %s "
-        "(compatibility: %s)",
+        "[SEF_CORE][PIPELINE] Policy '%s' decision for dataset %s: %s (compatibility: %s)",
         policy_name,
         dataset_id,
         policy["decision"],
@@ -90,7 +107,6 @@ def process_notification(
     )
 
     # Only keep NEW_LINK if DV reports candidates exist.
-    #         If discovery fails transiently (lake table not yet present), keep it.
     ops = list(plan.get("operations", []))
     new_link_ops = [
         op for op in ops
@@ -146,14 +162,26 @@ def process_notification(
     )
     metadata_helper.store_verification_result(verification)
 
+    # Guard log (you asked for this earlier; keep it)
+    try:
+        log.info(
+            "[SEF_CORE][PIPELINE] Verification outcome dataset_id=%s plan_id=%s correlation_id=%s status=%s issues=%s",
+            plan.get("dataset_id"),
+            plan.get("plan_id"),
+            plan.get("correlation_id"),
+            verification.get("status"),
+            verification.get("issues"),
+        )
+    except Exception:
+        pass
+
     if verification["status"] != "passed":
-        # Use 'issues' from VerificationResult (core.model) as the error details
         failure_event = publisher.build_failure_event(
             context=context,
             reason="verification_failed",
             details="; ".join(verification.get("issues", [])),
         )
-        kafka_helper.publish_schema_evolved(kafka_producer, failure_event)
+        kafka_helper.publish_schema_failed(kafka_producer, failure_event)
         return
 
     # 6) Store new schema version & publish success event

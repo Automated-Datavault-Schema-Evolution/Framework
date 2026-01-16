@@ -2,6 +2,7 @@ import json
 from typing import Dict, Any, Tuple, Iterable
 
 from kafka import KafkaConsumer, KafkaProducer
+from logger import log
 
 from config.config import KAFKA_TOPIC_NOTIFICATIONS, KAFKA_BOOTSTRAP_SERVERS, KAFKA_GROUP_ID, \
     KAFKA_TOPIC_SCHEMA_EVOLVED, KAFKA_TOPIC_SCHEMA_FAILED
@@ -41,11 +42,33 @@ def commit_offset(consumer: KafkaConsumer):
 
 def publish_schema_evolved(producer: KafkaProducer, event: Dict[str, Any]):
     key = event["dataset"]["id"]
+    try:
+        log.info(
+            "[SEF_CORE][KAFKA_OUT] topic=%s key=%s event_type=%s previous_version=%s new_version=%s plan_id=%s",
+            KAFKA_TOPIC_SCHEMA_EVOLVED,
+            key,
+            event.get("event_type"),
+            event.get("previous_version"),
+            event.get("new_version"),
+            (event.get("plan") or {}).get("plan_id"),
+        )
+    except Exception:
+        pass
     producer.send(KAFKA_TOPIC_SCHEMA_EVOLVED, key=key, value=event)
     producer.flush()
 
 
 def publish_schema_failed(producer: KafkaProducer, event: Dict[str, Any]):
     key = event["dataset"]["id"]
+    try:
+        log.info(
+            "[SEF_CORE][KAFKA_OUT] topic=%s key=%s event_type=%s reason=%s",
+            KAFKA_TOPIC_SCHEMA_FAILED,
+            key,
+            event.get("event_type"),
+            event.get("reason"),
+        )
+    except Exception:
+        pass
     producer.send(KAFKA_TOPIC_SCHEMA_FAILED, key=key, value=event)
     producer.flush()
