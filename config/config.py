@@ -89,7 +89,7 @@ GRPC_TIMEOUT_S = int(os.getenv("GRPC_TIMEOUT_S", 200))
 # DBT
 DBT_PROJECT_DIR = os.getenv("DBT_PROJECT_DIR", "/opt/dbt")
 
-MAX_RETRIES = int(os.getenv("SEF_EXECUTOR_MAX_RETRIES", "8"))
+MAX_RETRIES = int(os.getenv("SEF_EXECUTOR_MAX_RETRIES", "20"))
 BACKOFF_INITIAL_S = float(os.getenv("SEF_EXECUTOR_BACKOFF_INITIAL_S", "0.25"))
 BACKOFF_MULT = float(os.getenv("SEF_EXECUTOR_BACKOFF_MULT", "2.0"))
-BACKOFF_MAX_S = float(os.getenv("SEF_EXECUTOR_BACKOFF_MAX_S", "2.0"))
+BACKOFF_MAX_S = float(os.getenv("SEF_EXECUTOR_BACKOFF_MAX_S", "3.0"))

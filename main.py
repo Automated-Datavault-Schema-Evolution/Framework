@@ -1,6 +1,8 @@
 import json
 import os
+import time
 
+import grpc
 from logger import log
 
 from core import pipeline
@@ -31,6 +33,11 @@ def _dump_json(obj, max_chars: int) -> str:
     return _truncate(s, max_chars)
 
 
+def _refresh_stubs() -> tuple:
+    """Recreate gRPC stubs (helps after transient network/container restarts)."""
+    return lake_handler_client.create_stub(), vault_handler_client.create_stub()
+
+
 def main() -> None:
     log.info("[SEF_CORE] Starting Schema Evolution Framework core")
 
@@ -48,8 +55,7 @@ def main() -> None:
     consumer = kafka_helper.create_consumer()
     producer = kafka_helper.create_producer()
 
-    lake_stub = lake_handler_client.create_stub()
-    vault_stub = vault_handler_client.create_stub()
+    lake_stub, vault_stub = _refresh_stubs()
 
     for message, notification in kafka_helper.consume_notification(consumer):
         try:
@@ -71,15 +77,36 @@ def main() -> None:
                 kafka_producer=producer,
             )
 
-            kafka_helper.commit_offset(consumer)
+            # Commit only this message's offset (avoids skipping failed earlier offsets).
+            kafka_helper.commit_offset(consumer, message)
 
         except Exception as e:
             log.error(
-                "[SEF_CORE] Exception while processing notification at offset %s: %s",
+                "[SEF_CORE] Exception while processing notification topic=%s partition=%s offset=%s: %s",
+                getattr(message, "topic", None),
+                getattr(message, "partition", None),
                 getattr(message, "offset", None),
                 e,
             )
-            # Intentionally do not commit; message will be retried.
+
+            # Critical: ensure we retry *the same* offset next, rather than continuing and later
+            # committing past it (which would lose the message).
+            try:
+                kafka_helper.rewind_offset(consumer, message)
+            except Exception as seek_exc:
+                log.warning("[SEF_CORE] Failed to rewind Kafka offset: %s", seek_exc)
+
+            # If the failure looks like a transient gRPC transport issue, refresh channels.
+            try:
+                if isinstance(e, grpc.RpcError):
+                    code = e.code()
+                    if code in (grpc.StatusCode.UNAVAILABLE, grpc.StatusCode.DEADLINE_EXCEEDED):
+                        lake_stub, vault_stub = _refresh_stubs()
+            except Exception:
+                pass
+
+            # Small backoff to avoid tight loops during outages.
+            time.sleep(1.0)
 
 
 if __name__ == "__main__":

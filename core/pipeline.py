@@ -109,16 +109,23 @@ def process_notification(
     # Only keep NEW_LINK if DV reports candidates exist.
     ops = list(plan.get("operations", []))
     new_link_ops = [
-        op for op in ops
+        op
+        for op in ops
         if op.get("layer") == "vault" and op.get("kind") == "NEW_LINK" and op.get("target") == dataset_id
     ]
     if new_link_ops:
-        probe = vault_handler_client.probe_link_candidates(
-            vault_stub,
-            correlation_id=context["correlation_id"],
-            plan_id=plan["plan_id"],
-            table_name=dataset_id,
-        )
+        try:
+            probe = vault_handler_client.probe_link_candidates(
+                vault_stub,
+                correlation_id=context["correlation_id"],
+                plan_id=plan["plan_id"],
+                table_name=dataset_id,
+            )
+        except Exception as e:
+            # Treat DV unavailability as a probe failure and drop NEW_LINK to avoid aborting
+            # the whole notification. The actual vault operations will still be executed (and
+            # fail) if the handler is truly down.
+            probe = {"error_code": "DV_UNAVAILABLE", "error_message": str(e)}
 
         if probe.get("error_code"):
             log.warning(

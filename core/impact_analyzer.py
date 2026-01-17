@@ -1,56 +1,97 @@
-from typing import List, Optional
+from __future__ import annotations
 
-from core.model import (
-    HeaderSnapshot,
-    ChangeAtom,
-    ImpactAnalysis,
-)
+from typing import List, Optional, Dict, Any
+
+from core.model import HeaderSnapshot, ChangeAtom, ImpactAnalysis
 from helper import lineage_helper
 
+# --- type normalization -------------------------------------------------------
 
-def _canonical_type(attr: dict) -> Optional[str]:
-    """
-    Canonicalize attribute types for comparison.
+_TYPE_ALIASES = {
+    # strings
+    "text": "string",
+    "varchar": "string",
+    "character varying": "string",
+    "bpchar": "string",
+    "char": "string",
+    "string": "string",
 
-    For CSV-derived schemas we prefer physical/storage types over inferred logical types to avoid
-    false CHANGE_TYPE detection (e.g., lake reports Postgres 'text' while filewatcher infers 'integer'
-    but physical_type remains 'string').
-    """
-    if not isinstance(attr, dict):
-        return None
+    # ints
+    "int": "integer",
+    "int4": "integer",
+    "integer": "integer",
+    "bigint": "bigint",
+    "int8": "bigint",
 
-    t = attr.get("physical_type") or attr.get("logical_type") or attr.get("type")
+    # floats
+    "float": "float",
+    "float8": "float",
+    "double": "float",
+    "double precision": "float",
+    "real": "float",
+
+    # bool
+    "bool": "boolean",
+    "boolean": "boolean",
+
+    # timestamps (keep as-is but normalized)
+    "timestamp": "timestamp",
+    "timestamptz": "timestamptz",
+    "timestamp with time zone": "timestamptz",
+    "timestamp without time zone": "timestamp",
+}
+
+
+def _norm_type(t: Any) -> Optional[str]:
     if t is None:
         return None
-
     s = str(t).strip().lower()
-
-    # normalize common synonyms
-    if s in ("text", "varchar", "char", "character varying", "string", "str"):
-        return "string"
-    if s in ("int", "integer", "bigint", "smallint", "long"):
-        return "integer"
-    if s in ("float", "double", "decimal", "numeric", "number"):
-        return "number"
-    if s in ("bool", "boolean"):
-        return "boolean"
-
-    return s
+    if not s:
+        return None
+    return _TYPE_ALIASES.get(s, s)
 
 
-def diff_headers(
-        prev: Optional[HeaderSnapshot],
-        new: HeaderSnapshot,
-) -> List[ChangeAtom]:
+def _extract_effective_type(attr: Dict[str, Any]) -> Optional[str]:
     """
-    Very simple schema diff: add/drop/change_type by name.
+    Effective type used for schema diff.
 
-    IMPORTANT:
-    - Use canonicalized types (preferring physical/storage types) to avoid spurious CHANGE_TYPE
-      in CSV/RDBMS-backed lake setups.
+    Key behavior for CSV:
+      - physical_type is typically "string" for all columns (placeholder),
+        while logical_type carries the inferred type. We must diff on logical_type
+        to detect widening (e.g., integer -> float).
     """
-    new_attrs = {a["name"]: a for a in new.get("attributes", [])}
-    prev_attrs = {a["name"]: a for a in prev.get("attributes", [])} if prev else {}
+    logical = attr.get("logical_type")
+    physical = attr.get("physical_type")
+    legacy = attr.get("type")  # some producers use "type"
+
+    logical_n = _norm_type(logical)
+    physical_n = _norm_type(physical)
+    legacy_n = _norm_type(legacy)
+
+    # If logical_type exists, trust it (especially when physical is a CSV placeholder).
+    if logical_n:
+        return logical_n
+
+    # Otherwise fall back to physical/type.
+    if physical_n:
+        return physical_n
+    if legacy_n:
+        return legacy_n
+
+    return None
+
+
+# --- diff + impact ------------------------------------------------------------
+
+def diff_headers(prev: Optional[HeaderSnapshot], new: HeaderSnapshot) -> List[ChangeAtom]:
+    """
+    Schema diff: add/drop/change_type by column name.
+
+    NOTE:
+      - Uses logical_type preferentially so CSV-driven logical widening is detected.
+    """
+    new_attrs = {a["name"]: a for a in (new.get("attributes", []) or [])}
+    prev_attrs = {a["name"]: a for a in (prev.get("attributes", []) or [])} if prev else {}
 
     atoms: List[ChangeAtom] = []
 
@@ -61,19 +102,16 @@ def diff_headers(
                     "kind": "ADD_COLUMN",
                     "attribute": name,
                     "from_type": None,
-                    "to_type": _canonical_type(attr),
+                    "to_type": _extract_effective_type(attr),
                 }
             )
         else:
             old = prev_attrs[name]
-            old_type = _canonical_type(old)
-            new_type = _canonical_type(attr)
+            old_type = _extract_effective_type(old)
+            new_type = _extract_effective_type(attr)
 
-            # If one side has no type, don't manufacture a change.
-            if old_type is None or new_type is None:
-                continue
-
-            if old_type != new_type:
+            # Only emit CHANGE_TYPE when both sides are known and differ.
+            if old_type and new_type and old_type != new_type:
                 atoms.append(
                     {
                         "kind": "CHANGE_TYPE",
@@ -89,7 +127,7 @@ def diff_headers(
                 {
                     "kind": "DROP_COLUMN",
                     "attribute": name,
-                    "from_type": _canonical_type(attr),
+                    "from_type": _extract_effective_type(attr),
                     "to_type": None,
                 }
             )
@@ -97,10 +135,7 @@ def diff_headers(
     return atoms
 
 
-def analyze_impact(
-        dataset_id: str,
-        atoms: List[ChangeAtom],
-) -> ImpactAnalysis:
+def analyze_impact(dataset_id: str, atoms: List[ChangeAtom]) -> ImpactAnalysis:
     changed_attributes = [a["attribute"] for a in atoms]
     lineage = lineage_helper.get_impacted_artifacts(dataset_id, changed_attributes)
 
