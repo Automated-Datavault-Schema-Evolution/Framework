@@ -1,4 +1,5 @@
-from typing import Dict, Any
+from collections import Counter
+from typing import Dict, Any, Optional, Tuple
 
 from logger import log
 
@@ -6,6 +7,51 @@ from config.config import DEFAULT_POLICY_NAME
 from core import change_director, impact_analyzer, policy_engine, publisher, migration_planner, executor, verifier
 from handler import vault_handler_client
 from helper import metadata_helper, kafka_helper
+
+
+def _attributes_list(header: Any) -> Optional[list]:
+    if isinstance(header, dict):
+        attrs = header.get("attributes")
+        if isinstance(attrs, list):
+            return attrs
+    return None
+
+
+def _attr_names(header: Any) -> list:
+    attrs = _attributes_list(header) or []
+    names = []
+    for a in attrs:
+        if isinstance(a, dict) and a.get("name"):
+            names.append(str(a.get("name")))
+    return names
+
+
+def _normalize_previous_header(latest: Optional[Dict[str, Any]]) -> Tuple[Optional[Dict[str, Any]], str]:
+    """
+    Ensure previous_header is a dict containing an 'attributes' list.
+    Parquet runs have shown metastore records where 'header' is wrapped or shaped differently.
+    """
+    if not latest or not isinstance(latest, dict):
+        return None, "no_latest"
+
+    # Most common: latest["header"] is already the header object
+    h = latest.get("header")
+
+    # Case 1: direct header dict with attributes list
+    if isinstance(h, dict) and isinstance(h.get("attributes"), list):
+        return h, "direct"
+
+    # Case 2: header wrapper like {"header": {...}}
+    if isinstance(h, dict) and isinstance(h.get("header"), dict) and isinstance(h["header"].get("attributes"), list):
+        return h["header"], "wrapped_header"
+
+    # Case 3: some stores may persist the header at the top-level (rare, but safe to support)
+    if isinstance(latest.get("attributes"), list):
+        # Treat latest itself as the header snapshot
+        return latest, "latest_is_header"
+
+    # Unrecognized shape
+    return None, "invalid_shape"
 
 
 def process_notification(
@@ -34,8 +80,36 @@ def process_notification(
     dataset_id = notification["dataset"]["id"]
 
     latest = metadata_helper.load_latest_schema(dataset_id)
-    previous_header = latest["header"] if latest else None
+
+    # Normalize previous header shape to avoid false "initial create" plans (parquet runs).
+    previous_header, prev_header_shape = _normalize_previous_header(latest)
     current_version = int(latest["version"]) if latest and latest.get("version") is not None else None
+
+    # High-signal trace at notification start
+    try:
+        log.info(
+            "[SEF_CORE][TRACE] notification_start dataset_id=%s correlation_id=%s producer_previous_schema_version=%s "
+            "metastore_current_version=%s prev_header_shape=%s",
+            dataset_id,
+            notification.get("correlation_id"),
+            notification.get("previous_schema_version"),
+            current_version,
+            prev_header_shape,
+        )
+    except Exception:
+        pass
+
+    if latest and prev_header_shape == "invalid_shape":
+        try:
+            log.warning(
+                "[SEF_CORE][TRACE] metastore_latest_invalid_header_shape dataset_id=%s latest_keys=%s header_keys=%s",
+                dataset_id,
+                sorted(list(latest.keys())),
+                sorted(list(latest.get("header", {}).keys())) if isinstance(latest.get("header"), dict) else str(
+                    type(latest.get("header"))),
+            )
+        except Exception:
+            pass
 
     context = change_director.build_change_context(
         notification=notification,
@@ -48,10 +122,23 @@ def process_notification(
     if context.get("previous_version") is None and current_version is not None:
         context["previous_version"] = current_version
 
+    # Log schema sizes to make diff failures obvious
+    try:
+        log.info(
+            "[SEF_CORE][TRACE] schema_snapshot dataset_id=%s prev_attrs=%s new_attrs=%s prev_cols=%s new_cols=%s",
+            dataset_id,
+            len(_attributes_list(previous_header) or []),
+            len(_attributes_list(context.get("new_schema")) or []),
+            len(_attr_names(previous_header)),
+            len(_attr_names(context.get("new_schema"))),
+        )
+    except Exception:
+        pass
+
     # Keep trace logging granular; add the derived value to make future failures obvious.
     try:
         log.info(
-            "[SEF_CORE][TRACE] dataset_id=%s producer_previous_schema_version=%s current_version=%s derived_previous_version=%s",
+            "[SEF_CORE][TRACE] version_resolution dataset_id=%s producer_previous_schema_version=%s current_version=%s derived_previous_version=%s",
             dataset_id,
             notification.get("previous_schema_version"),
             current_version,
@@ -65,6 +152,19 @@ def process_notification(
         prev=previous_header,
         new=context["new_schema"],
     )
+
+    # Summarize atoms (kind counts) for diagnostics
+    try:
+        kind_counts = Counter([a.get("kind") for a in atoms if isinstance(a, dict)])
+        log.info(
+            "[SEF_CORE][TRACE] diff_summary dataset_id=%s atoms_total=%s atoms_by_kind=%s",
+            dataset_id,
+            len(atoms) if atoms is not None else 0,
+            dict(kind_counts),
+        )
+    except Exception:
+        pass
+
     impact = impact_analyzer.analyze_impact(
         dataset_id=dataset_id,
         atoms=atoms,
@@ -90,6 +190,17 @@ def process_notification(
     )
 
     if policy["decision"] != "allow":
+        # Provide reasons in log to reduce guesswork
+        try:
+            log.info(
+                "[SEF_CORE][PIPELINE] Policy denied dataset_id=%s policy=%s reasons=%s",
+                dataset_id,
+                policy_name,
+                policy.get("reasons"),
+            )
+        except Exception:
+            pass
+
         failure_event = publisher.build_failure_event(
             context=context,
             reason="policy_denied",
@@ -106,8 +217,21 @@ def process_notification(
         policy=policy,
     )
 
+    # Plan summary (counts by layer/kind)
+    try:
+        ops = list(plan.get("operations", []))
+        op_counts = Counter([(op.get("layer"), op.get("kind")) for op in ops if isinstance(op, dict)])
+        log.info(
+            "[SEF_CORE][TRACE] plan_summary dataset_id=%s plan_id=%s ops_total=%s ops_by_layer_kind=%s",
+            dataset_id,
+            plan.get("plan_id"),
+            len(ops),
+            {f"{k[0]}::{k[1]}": v for k, v in op_counts.items()},
+        )
+    except Exception:
+        ops = list(plan.get("operations", []))
+
     # Only keep NEW_LINK if DV reports candidates exist.
-    ops = list(plan.get("operations", []))
     new_link_ops = [
         op
         for op in ops
@@ -160,6 +284,17 @@ def process_notification(
     )
     metadata_helper.store_execution_result(execution_result)
 
+    # Execution summary log
+    try:
+        log.info(
+            "[SEF_CORE][PIPELINE] Execution stored dataset_id=%s plan_id=%s correlation_id=%s",
+            plan.get("dataset_id"),
+            plan.get("plan_id"),
+            plan.get("correlation_id"),
+        )
+    except Exception:
+        pass
+
     # 5) Verification step
     verification = verifier.verify(
         plan,
@@ -169,7 +304,7 @@ def process_notification(
     )
     metadata_helper.store_verification_result(verification)
 
-    # Guard log (you asked for this earlier; keep it)
+    # Guard log (keep)
     try:
         log.info(
             "[SEF_CORE][PIPELINE] Verification outcome dataset_id=%s plan_id=%s correlation_id=%s status=%s issues=%s",
@@ -197,6 +332,33 @@ def process_notification(
         header=context["new_schema"],
         correlation_id=context["correlation_id"],
     )
+
+    # Hard guard: parquet runs have shown new_version=None in logs; never emit that.
+    if not isinstance(new_version, int):
+        fallback_version = int((context.get("previous_version") or 0) + 1)
+        try:
+            log.warning(
+                "[SEF_CORE][PIPELINE] store_schema_version returned non-int (value=%s). Using fallback=%s "
+                "(dataset_id=%s correlation_id=%s)",
+                new_version,
+                fallback_version,
+                dataset_id,
+                context.get("correlation_id"),
+            )
+        except Exception:
+            pass
+        new_version = fallback_version
+    else:
+        try:
+            log.info(
+                "[SEF_CORE][TRACE] store_schema_version_ok dataset_id=%s correlation_id=%s new_version=%s",
+                dataset_id,
+                context.get("correlation_id"),
+                new_version,
+            )
+        except Exception:
+            pass
+
     event = publisher.build_schema_evolved_event(
         context=context,
         policy=policy,

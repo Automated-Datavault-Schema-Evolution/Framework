@@ -2,10 +2,43 @@ import os
 import time
 from typing import Any, List
 
+import grpc
 from logger import log
 
 from core.model import Plan, ExecutionResult, VerificationResult
 from handler import lake_handler_client, vault_handler_client
+
+
+def _is_transient_grpc_error(exc: Exception) -> bool:
+    """
+    Detect transient connectivity errors (common during docker restart fault injections).
+    We treat these as retryable within the bounded verification window.
+    """
+    # grpc.RpcError path
+    if isinstance(exc, grpc.RpcError):
+        try:
+            code = exc.code()
+        except Exception:
+            code = None
+
+        if code in (
+                grpc.StatusCode.UNAVAILABLE,
+                grpc.StatusCode.DEADLINE_EXCEEDED,
+                grpc.StatusCode.RESOURCE_EXHAUSTED,
+        ):
+            return True
+
+    # string heuristics (covers wrapped errors / _InactiveRpcError stringification)
+    msg = str(exc).lower()
+    transient_markers = [
+        "statuscode.unavailable",
+        "connection refused",
+        "failed to connect to all addresses",
+        "connect: connection refused",
+        "unavailable",
+        "temporarily unavailable",
+    ]
+    return any(m in msg for m in transient_markers)
 
 
 def verify(plan: Plan, execution: ExecutionResult, lake_stub: Any, vault_stub: Any) -> VerificationResult:
@@ -30,8 +63,7 @@ def verify(plan: Plan, execution: ExecutionResult, lake_stub: Any, vault_stub: A
     ops = plan.get("operations", []) or []
     requires_vault = any(op.get("layer") == "vault" for op in ops)
 
-    # Bounded wait: only retry if evidence is not yet visible (eventual consistency).
-    max_wait_s = float(os.getenv("SEF_VERIFY_MAX_WAIT_S", "30"))
+    max_wait_s = float(os.getenv("SEF_VERIFY_MAX_WAIT_S", "120"))
     interval_s = float(os.getenv("SEF_VERIFY_INTERVAL_S", "1.0"))
     deadline = time.monotonic() + max_wait_s
 
@@ -51,10 +83,20 @@ def verify(plan: Plan, execution: ExecutionResult, lake_stub: Any, vault_stub: A
                 lake_stub, correlation_id, plan_id, dataset_id
             )
             last_lake_tables = len(lake_evidence.get("tables", []) or [])
+            last_lake_exc = None
             log.info(f"[SEF_CORE][VERIFIER] Lake introspection returned {last_lake_tables} tables")
         except Exception as e:
             last_lake_exc = e
-            log.error(f"[SEF_CORE][VERIFIER] Lake introspection failed: {e}")
+            if _is_transient_grpc_error(e):
+                # Important: re-create stub/channel to avoid gRPC reconnect backoff after a refused connection.
+                log.warning(f"[SEF_CORE][VERIFIER] Lake introspection transient error; will retry: {e}")
+                try:
+                    lake_stub = lake_handler_client.create_stub()
+                except Exception as stub_e:
+                    # keep original error; stub recreation itself can fail during DNS/network churn
+                    log.warning(f"[SEF_CORE][VERIFIER] Lake stub recreation failed (will still retry): {stub_e}")
+            else:
+                log.error(f"[SEF_CORE][VERIFIER] Lake introspection failed: {e}")
 
         # Live introspection for data vault
         try:
@@ -62,12 +104,18 @@ def verify(plan: Plan, execution: ExecutionResult, lake_stub: Any, vault_stub: A
                 vault_stub, correlation_id, plan_id, dataset_id
             )
             last_vault_structures = len(vault_evidence.get("vault_structures", []) or [])
-            log.info(
-                f"[SEF_CORE][VERIFIER] Vault introspection returned {last_vault_structures} structures"
-            )
+            last_vault_exc = None
+            log.info(f"[SEF_CORE][VERIFIER] Vault introspection returned {last_vault_structures} structures")
         except Exception as e:
             last_vault_exc = e
-            log.error(f"[SEF_CORE][VERIFIER] Vault introspection failed: {e}")
+            if _is_transient_grpc_error(e):
+                log.warning(f"[SEF_CORE][VERIFIER] Vault introspection transient error; will retry: {e}")
+                try:
+                    vault_stub = vault_handler_client.create_stub()
+                except Exception as stub_e:
+                    log.warning(f"[SEF_CORE][VERIFIER] Vault stub recreation failed (will still retry): {stub_e}")
+            else:
+                log.error(f"[SEF_CORE][VERIFIER] Vault introspection failed: {e}")
 
         # Readiness conditions:
         # - lake is "ready" if it can introspect at least one table

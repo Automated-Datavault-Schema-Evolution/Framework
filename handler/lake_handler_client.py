@@ -19,7 +19,17 @@ def _normalize_kind(kind: Any) -> int:
 
 
 def create_stub() -> pb_grpc.LakeHandlerStub:
-    channel = grpc.insecure_channel(LAKE_HANDLER_GRPC_TARGET)
+    target = LAKE_HANDLER_GRPC_TARGET.strip()
+    if not target.startswith("dns:///"):
+        target = f"dns:///{target}"
+
+    channel = grpc.insecure_channel(
+        target,
+        options=[
+            ("grpc.dns_resolver_refresh_rate_ms", 1000),
+            ("grpc.enable_retries", 1),
+        ],
+    )
     return pb_grpc.LakeHandlerStub(channel)
 
 

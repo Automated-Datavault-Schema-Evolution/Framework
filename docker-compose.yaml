@@ -16,6 +16,7 @@ services:
       - ext-jars:/opt/ext-jars:ro
       - jdbc-driver:/opt/jdbc-jars:ro
       - ./hive-site.xml:/opt/spark/conf/hive-site.xml:ro
+      - ${LAKE_STORE_DIR}:/lake
     ports:
       - "4043:4043"
     environment:
@@ -67,6 +68,7 @@ services:
       - ./hive-site.xml:/opt/spark/conf/hive-site.xml:ro
       - delta-jars:/opt/delta-jars:ro
       - ext-jars:/opt/ext-jars:ro
+      - ${LAKE_STORE_DIR}:/lake
     ports:
       - "7079:7079"
       - "8070:8070"
@@ -118,6 +120,7 @@ services:
       - ./hive-site.xml:/opt/spark/conf/hive-site.xml:ro
       - delta-jars:/opt/delta-jars:ro
       - ext-jars:/opt/ext-jars:ro
+      - ${LAKE_STORE_DIR}:/lake
     ports: [ "8071:8071" ]
     networks: [ data-automation-net ]
     healthcheck:
@@ -166,6 +169,7 @@ services:
       - ./hive-site.xml:/opt/spark/conf/hive-site.xml:ro
       - delta-jars:/opt/delta-jars:ro
       - ext-jars:/opt/ext-jars:ro
+      - ${LAKE_STORE_DIR}:/lake
     ports: [ "8072:8072" ]
     networks: [ data-automation-net ]
     healthcheck:
