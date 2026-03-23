@@ -80,15 +80,7 @@ def rewind_offset(consumer: KafkaConsumer, message: Any) -> None:
 def publish_schema_evolved(producer: KafkaProducer, event: Dict[str, Any]):
     key = event["dataset"]["id"]
     try:
-        log.info(
-            "[SEF_CORE][KAFKA_OUT] topic=%s key=%s event_type=%s previous_version=%s new_version=%s plan_id=%s",
-            KAFKA_TOPIC_SCHEMA_EVOLVED,
-            key,
-            event.get("event_type"),
-            event.get("previous_version"),
-            event.get("new_version"),
-            (event.get("plan") or {}).get("plan_id"),
-        )
+        log.info(f"""[SEF_CORE][KAFKA_OUT] topic={KAFKA_TOPIC_SCHEMA_EVOLVED} key={key} event_type={event.get("event_type")} previous_version={event.get("previous_version")} new_version={event.get("new_version")} plan_id={(event.get("plan") or {}).get("plan_id")}""")
     except Exception:
         pass
     producer.send(KAFKA_TOPIC_SCHEMA_EVOLVED, key=key, value=event)
@@ -98,13 +90,7 @@ def publish_schema_evolved(producer: KafkaProducer, event: Dict[str, Any]):
 def publish_schema_failed(producer: KafkaProducer, event: Dict[str, Any]):
     key = event["dataset"]["id"]
     try:
-        log.info(
-            "[SEF_CORE][KAFKA_OUT] topic=%s key=%s event_type=%s reason=%s",
-            KAFKA_TOPIC_SCHEMA_FAILED,
-            key,
-            event.get("event_type"),
-            event.get("reason"),
-        )
+        log.info(f"""[SEF_CORE][KAFKA_OUT] topic={KAFKA_TOPIC_SCHEMA_FAILED} key={key} event_type={event.get("event_type")} reason={event.get("reason")}""")
     except Exception:
         pass
     producer.send(KAFKA_TOPIC_SCHEMA_FAILED, key=key, value=event)

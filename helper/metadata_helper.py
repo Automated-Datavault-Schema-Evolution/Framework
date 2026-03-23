@@ -13,6 +13,35 @@ from psycopg2._json import Json
 from config.config import LAKE_TYPE
 from helper.pg_helper import get_metastore_connection, release_metastore_connection
 
+# ----------------- Metadata store selection -----------------------------------------------
+# Metadata store is independent of lake backend.
+#
+# Supported values:
+#   SEF_METADATA_STORE=postgres  -> always use Postgres-backed SEF tables
+#   SEF_METADATA_STORE=fs        -> always use filesystem JSON store
+#   (unset/empty)                -> legacy behavior (rdbms->postgres, parquet->fs)
+#
+_SEF_METADATA_STORE_RAW = os.getenv("SEF_METADATA_STORE", "").strip().lower()
+
+
+def _normalize_metadata_store(v: str) -> str:
+    v = (v or "").strip().lower()
+    if v in ("postgres", "pg", "postgre", "postgresql"):
+        return "postgres"
+    if v in ("fs", "file", "files", "filesystem"):
+        return "fs"
+    return ""
+
+
+SEF_METADATA_STORE = _normalize_metadata_store(_SEF_METADATA_STORE_RAW)
+
+
+def _effective_metadata_store() -> str:
+    if SEF_METADATA_STORE:
+        return SEF_METADATA_STORE
+    # Legacy fallback: metadata store coupled to lake backend
+    return "postgres" if LAKE_TYPE == "rdbms" else "fs"
+
 
 # ----------------- FS -------------------------------------------------------------------
 def _fs_root() -> Path:
@@ -337,45 +366,50 @@ def _db_store_verification_result(verification: Dict[str, Any]):
 
 
 def load_latest_schema(dataset_id: str) -> Optional[Dict[str, Any]]:
-    if LAKE_TYPE == "rdbms":
+    store = _effective_metadata_store()
+    if store == "postgres":
         return _db_load_latest_schema(dataset_id)
-    elif LAKE_TYPE == "parquet":
+    if store == "fs":
         return _fs_load_latest_schema(dataset_id)
-    log.error(f"[METASTORE] Unknown lake type: {LAKE_TYPE}")
+    log.error(f'[SEF_HELPER][METASTORE] Unknown metadata store: {store}')
     return None
 
 
 def store_schema_version(dataset_id: str, header: Dict[str, Any], correlation_id: str) -> int:
-    if LAKE_TYPE == "rdbms":
+    store = _effective_metadata_store()
+    if store == "postgres":
         return _db_store_schema_version(dataset_id, header, correlation_id)
-    elif LAKE_TYPE == "parquet":
+    if store == "fs":
         return _fs_store_schema_version(dataset_id, header, correlation_id)
-    log.error(f"[METASTORE] Unknown lake type: {LAKE_TYPE}")
-    raise RuntimeError(f"Unknown lake type: {LAKE_TYPE}")
+    log.error(f'[SEF_HELPER][METASTORE] Unknown metadata store: {store}')
+    raise RuntimeError(f"Unknown metadata store: {store}")
 
 
 def store_execution_result(result: Dict[str, Any]):
-    if LAKE_TYPE == "rdbms":
+    store = _effective_metadata_store()
+    if store == "postgres":
         return _db_store_execution_results(result)
-    elif LAKE_TYPE == "parquet":
+    if store == "fs":
         return _fs_store_generic(subdir="executions", key=result["plan_id"], payload=result)
-    log.error(f"[METASTORE] Unknown lake type: {LAKE_TYPE}")
-    raise RuntimeError(f"Unknown lake type: {LAKE_TYPE}")
+    log.error(f'[SEF_HELPER][METASTORE] Unknown metadata store: {store}')
+    raise RuntimeError(f"Unknown metadata store: {store}")
 
 
 def store_plan(plan: Dict[str, Any]):
-    if LAKE_TYPE == "rdbms":
+    store = _effective_metadata_store()
+    if store == "postgres":
         return _db_store_plan(plan)
-    elif LAKE_TYPE == "parquet":
+    if store == "fs":
         return _fs_store_generic(subdir="plan", key=plan["plan_id"], payload=plan)
-    log.error(f"[METASTORE] Unknown lake type: {LAKE_TYPE}")
-    raise RuntimeError(f"Unknown lake type: {LAKE_TYPE}")
+    log.error(f'[SEF_HELPER][METASTORE] Unknown metadata store: {store}')
+    raise RuntimeError(f"Unknown metadata store: {store}")
 
 
 def store_verification_result(verification: Dict[str, Any]):
-    if LAKE_TYPE == "rdbms":
+    store = _effective_metadata_store()
+    if store == "postgres":
         return _db_store_verification_result(verification)
-    elif LAKE_TYPE == "parquet":
+    if store == "fs":
         return _fs_store_generic(subdir="verification", key=verification["plan_id"], payload=verification)
-    log.error(f"[METASTORE] Unknown lake type: {LAKE_TYPE}")
-    raise RuntimeError(f"Unknown lake type: {LAKE_TYPE}")
+    log.error(f'[SEF_HELPER][METASTORE] Unknown metadata store: {store}')
+    raise RuntimeError(f"Unknown metadata store: {store}")

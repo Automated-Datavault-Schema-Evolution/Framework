@@ -218,7 +218,7 @@ def record_lineage(edges: Iterable[Dict[str, Any]]) -> None:
     elif LAKE_TYPE == "parquet":
         return _fs_append_edges(edge_list)
     else:
-        log.error(f"[LINEAGE] Unknown lake type: {LAKE_TYPE}")
+        log.error(f"[SEF_HELPER][LINEAGE] Unknown lake type: {LAKE_TYPE}")
         return None
 
 
@@ -252,7 +252,7 @@ def get_impacted_artifacts(dataset_id: str, changed_attributes: List[str]) -> Di
     elif LAKE_TYPE == "parquet":
         edges = _fs_load_edges()
     else:
-        log.error(f"[LINEAGE] Unknown lake type: {LAKE_TYPE}")
+        log.error(f"[SEF_HELPER][LINEAGE] Unknown lake type: {LAKE_TYPE}")
         return None
 
     if not edges:

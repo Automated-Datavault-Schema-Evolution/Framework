@@ -81,7 +81,7 @@ METASTORE_URI = os.getenv("METASTORE_URI", "thrift://hive-metastore:9083")
 STREAM_TRIGGER = os.getenv("STREAM_TRIGGER", "2 seconds")
 PROCESSING_MODE = os.getenv("PROCESSING_MODE", "streaming")
 
-# Handler gRPC endpoints (TODO: change to default docker network names and ports)
+# Handler gRPC endpoints
 LAKE_HANDLER_GRPC_TARGET = os.getenv("LAKE_HANDLER_GRPC_TARGET", "DataLakeIngestionHandler:50051")
 VAULT_HANDLER_GRPC_TARGET = os.getenv("VAULT_HANDLER_GRPC_TARGET", "DatavaultIngestionHandler:50052")
 GRPC_TIMEOUT_S = int(os.getenv("GRPC_TIMEOUT_S", 200))

@@ -71,12 +71,12 @@ def init_metastore_pool(minconn=None, maxconn=None) -> SimpleConnectionPool:
                 user=METASTORE_DB_USER,
                 password=METASTORE_DB_PASSWORD,
             )
-            log.info(f"[METASTORE][RDBMS] Metastore connection pool created (min={minconn}, max={maxconn}).")
+            log.info(f"[SEF_HELPER][METASTORE][RDBMS] Metastore connection pool created (min={minconn}, max={maxconn}).")
         except Exception as e:
-            log.error(f"[METASTORE][RDBMS] Error establishing metastore connection pool: {e}")
+            log.error(f"[SEF_HELPER][METASTORE][RDBMS] Error establishing metastore connection pool: {e}")
             raise
     else:
-        log.debug("[METASTORE][RDBMS] Reusing existing metastore connection pool.")
+        log.debug("[SEF_HELPER][METASTORE][RDBMS] Reusing existing metastore connection pool.")
     return METASTORE_POOL
 
 
@@ -86,7 +86,7 @@ def get_metastore_connection():
     try:
         conn = pool.getconn()
         if conn.closed:
-            log.warning("[METASTORE][RDBMS] Received closed connection from pool; replacing it.")
+            log.warning("[SEF_HELPER][METASTORE][RDBMS] Received closed connection from pool; replacing it.")
             pool.putconn(conn, close=True)
             conn = pool.getconn()
 
@@ -96,13 +96,13 @@ def get_metastore_connection():
         except Exception:
             pass
 
-        log.debug("[METASTORE][RDBMS] Acquired connection from metastore pool.")
+        log.debug("[SEF_HELPER][METASTORE][RDBMS] Acquired connection from metastore pool.")
         return conn
     except Exception as e:
         msg = str(e)
         if "connection pool exhausted" in msg.lower():
             new_max = pool.maxconn + 5
-            log.warning(f"[METASTORE][RDBMS] Metastore connection pool exhausted. Expanding pool to {new_max}.")
+            log.warning(f"[SEF_HELPER][METASTORE][RDBMS] Metastore connection pool exhausted. Expanding pool to {new_max}.")
             try:
                 pool.closeall()
             except Exception:
@@ -115,7 +115,7 @@ def get_metastore_connection():
             except Exception:
                 pass
             return conn
-        log.error(f"[METASTORE][RDBMS] Error getting metastore connection: {e}")
+        log.error(f"[SEF_HELPER][METASTORE][RDBMS] Error getting metastore connection: {e}")
         raise
 
 
@@ -125,7 +125,7 @@ def release_metastore_connection(conn):
     try:
         if conn.closed:
             pool.putconn(conn, close=True)
-            log.debug("[METASTORE][RDBMS] Closed dead metastore connection from pool.")
+            log.debug("[SEF_HELPER][METASTORE][RDBMS] Closed dead metastore connection from pool.")
         else:
             # If anyone ever turned autocommit off and left a transaction open, reset it.
             try:
@@ -134,6 +134,6 @@ def release_metastore_connection(conn):
             except Exception:
                 pass
             pool.putconn(conn)
-            log.debug("[METASTORE][RDBMS] Released metastore connection back to pool.")
+            log.debug("[SEF_HELPER][METASTORE][RDBMS] Released metastore connection back to pool.")
     except Exception as e:
-        log.error(f"[METASTORE][RDBMS] Error releasing metastore connection: {e}")
+        log.error(f"[SEF_HELPER][METASTORE][RDBMS] Error releasing metastore connection: {e}")
