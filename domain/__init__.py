@@ -1,4 +1,3 @@
-"""Pure helpers used by the schema evolution orchestration pipeline."""
 
 from .notification_state import (
     attributes_list,

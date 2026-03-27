@@ -9,7 +9,6 @@ from config.config import LAKE_TYPE
 from helper.pg_helper import get_metastore_connection, release_metastore_connection
 
 
-# ----------------- FS -------------------------------------------------------------------
 def _fs_root() -> Path:
     root = Path("/opt/sef/lineage")
     root.mkdir(parents=True, exist_ok=True)
@@ -22,9 +21,6 @@ def _fs_edges_path() -> Path:
 
 
 def _fs_append_edges(edges: Iterable[Dict[str, Any]]):
-    """
-    Append edges as JSON lines to the edges.jsonl file.
-    """
     path = _fs_edges_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a") as f:
@@ -33,12 +29,6 @@ def _fs_append_edges(edges: Iterable[Dict[str, Any]]):
 
 
 def _fs_load_edges() -> List[Dict[str, Any]]:
-    """
-    Load all lineage edges from the filesystem store.
-
-    This is intentionally simple and not optimised for very large graphs,
-    which is acceptable for the current artefact.
-    """
     path = _fs_edges_path()
     if not path.exists():
         return []
@@ -51,16 +41,12 @@ def _fs_load_edges() -> List[Dict[str, Any]]:
             try:
                 edges.append(json.loads(line))
             except json.JSONDecodeError:
-                # skip malformed lines rather than failing whole load
+
                 continue
     return edges
 
 
-# ----------------- RDBMS -------------------------------------------------------------------
 def _db_ensure_schema(conn):
-    """
-        Ensure that the lineage tables exist.
-        """
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -154,13 +140,6 @@ def _db_insert_edges(edges: Iterable[Dict[str, Any]]):
 
 
 def _db_load_edges() -> List[Dict[str, Any]]:
-    """
-    Load all lineage edges.
-
-    For now we favour simplicity over a complex recursive CTE and fetch
-    the entire edge set into memory, assuming the graph remains modest
-    for the present use case.
-    """
     conn = get_metastore_connection()
     try:
         _db_ensure_schema(conn)
@@ -198,28 +177,6 @@ def _db_load_edges() -> List[Dict[str, Any]]:
     finally:
         release_metastore_connection(conn)
     return edges
-
-
-def record_lineage(edges: Iterable[Dict[str, Any]]) -> None:
-    """
-    Persist one or more lineage edges.
-
-    This function is intentionally forgiving: it ignores an empty iterator and
-    does not currently de-duplicate edges. De-duplication can be added later
-    if required.
-    """
-    # Materialise to list once, so we can safely iterate twice if needed
-    edge_list = list(edges)
-    if not edge_list:
-        return
-
-    if LAKE_TYPE == "rdbms":
-        return _db_insert_edges(edge_list)
-    elif LAKE_TYPE == "parquet":
-        return _fs_append_edges(edge_list)
-    else:
-        log.error(f"[SEF_HELPER][LINEAGE] Unknown lake type: {LAKE_TYPE}")
-        return None
 
 
 def get_impacted_artifacts(dataset_id: str, changed_attributes: List[str]) -> Dict[str, Any]:

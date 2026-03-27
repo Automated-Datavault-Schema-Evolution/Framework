@@ -1,6 +1,3 @@
-"""Top-level orchestration for one schema notification."""
-
-from __future__ import annotations
 
 from collections import Counter
 from typing import Any, Dict
@@ -22,9 +19,7 @@ from handler import vault_handler_client
 from helper import kafka_helper, metadata_helper
 
 
-
 def process_notification(notification: Dict[str, Any], lake_stub: Any, vault_stub: Any, kafka_producer: Any):
-    """Process one schema notification from validation through verification."""
     change_director.validate_notification(notification)
     dataset_id = notification["dataset"]["id"]
     latest = metadata_helper.load_latest_schema(dataset_id)
@@ -74,7 +69,8 @@ def process_notification(notification: Dict[str, Any], lake_stub: Any, vault_stu
     try:
         atom_counts = Counter(atom.get("kind") for atom in atoms if isinstance(atom, dict))
         log.info(
-            f"[SEF_CORE][PIPELINE][TRACE] diff_summary dataset_id={dataset_id} atoms_total={len(atoms) if atoms is not None else 0} atoms_by_kind={dict(atom_counts)}"
+            f"[SEF_CORE][PIPELINE][TRACE] diff_summary dataset_id={dataset_id} "
+            f"atoms_total={len(atoms) if atoms is not None else 0} atoms_by_kind={dict(atom_counts)}"
         )
     except Exception:
         pass
@@ -151,17 +147,25 @@ def process_notification(notification: Dict[str, Any], lake_stub: Any, vault_stu
     metadata_helper.store_execution_result(execution_result)
     try:
         log.info(
-            f"[SEF_CORE][PIPELINE] Execution stored dataset_id={plan.get('dataset_id')} plan_id={plan.get('plan_id')} correlation_id={plan.get('correlation_id')}"
+            f"[SEF_CORE][PIPELINE] Execution stored dataset_id={plan.get('dataset_id')} "
+            f"plan_id={plan.get('plan_id')} correlation_id={plan.get('correlation_id')}"
         )
     except Exception:
         pass
 
-    verification = verifier.verify(plan, execution_result, lake_stub, vault_stub)
+    verification = verifier.verify(
+        plan,
+        execution_result,
+        lake_stub,
+        vault_stub,
+        expected_schema=context.get("new_schema"),
+    )
     metadata_helper.store_verification_result(verification)
     try:
         log.info(
-            f"[SEF_CORE][PIPELINE] Verification outcome dataset_id={plan.get('dataset_id')} plan_id={plan.get('plan_id')} "
-            f"correlation_id={plan.get('correlation_id')} status={verification.get('status')} issues={verification.get('issues')}"
+            f"[SEF_CORE][PIPELINE] Verification outcome dataset_id={plan.get('dataset_id')} "
+            f"plan_id={plan.get('plan_id')} correlation_id={plan.get('correlation_id')} "
+            f"status={verification.get('status')} issues={verification.get('issues')}"
         )
     except Exception:
         pass

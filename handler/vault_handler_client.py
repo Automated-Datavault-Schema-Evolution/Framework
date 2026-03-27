@@ -19,8 +19,8 @@ def _normalize_kind(kind: Any) -> int:
 
 
 def create_stub() -> pb_grpc.VaultHandlerStub:
-    # Force gRPC to use DNS resolver and refresh more aggressively so container restarts
-    # do not strand the client on a stale IP.
+    
+    
     target = VAULT_HANDLER_GRPC_TARGET.strip()
     if not target.startswith("dns:///"):
         target = f"dns:///{target}"

@@ -10,6 +10,12 @@
 #   obligations_on_additive: [str...]    # obligations when only ADD_COLUMN changes detected
 #   compatibility_for_drop: string       # compatibility classification if drop is allowed
 #   compatibility_for_change_type: string
+#   impact_mode: off|breaking_only|always
+#   max_impacted_total: int              # optional hard cap across all downstream artifacts
+#   max_impacted_lake_tables: int        # optional hard cap
+#   max_impacted_vault_objects: int      # optional hard cap
+#   max_impacted_transformations: int    # optional hard cap
+#   block_on_any_impact: bool            # optional convenience guard once impact_mode applies
 
 # Production policy – conservative.
 production: &production
@@ -18,6 +24,8 @@ production: &production
   compatibility_for_drop: breaking
   compatibility_for_change_type: breaking
   compatibility_for_change_type_widening: backward
+  impact_mode: breaking_only
+  max_impacted_total: 0
   obligations_on_additive:
     - NEW_HUB
     - NEW_LINK
@@ -28,6 +36,8 @@ sandbox:
   <<: *production
   allow_drop: true
   allow_change_type: true
+  impact_mode: off
+  max_impacted_total:
 
 # Default policy, used when no explicit policy is selected.
 # By default, it is the same as production.

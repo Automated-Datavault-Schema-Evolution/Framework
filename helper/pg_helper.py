@@ -1,20 +1,23 @@
-import os
-
 import psycopg2
 from logger import log
 from psycopg2 import sql
 from psycopg2.pool import SimpleConnectionPool
 
-from config.config import METASTORE_DB_HOST, METASTORE_DB, METASTORE_DB_PORT, METASTORE_DB_USER, METASTORE_DB_PASSWORD
+from config.config import (
+    METASTORE_DB,
+    METASTORE_DB_HOST,
+    METASTORE_DB_PASSWORD,
+    METASTORE_DB_PORT,
+    METASTORE_DB_USER,
+    METASTORE_POOL_MAX,
+    METASTORE_POOL_MIN,
+)
 
-# Global connection pool for the metastore
+
 METASTORE_POOL = None
-METASTORE_POOL_MIN = int(os.getenv("METASTORE_POOL_MIN", 1))
-METASTORE_POOL_MAX = int(os.getenv("METASTORE_POOL_MAX", 5))
 
 
-def _ensure_metastore_db():
-    """Ensure that the metastore database exists."""
+def _ensure_metastore_db() -> None:
     try:
         conn = psycopg2.connect(
             host=METASTORE_DB_HOST,
@@ -29,6 +32,7 @@ def _ensure_metastore_db():
         if "does not exist" not in str(exc):
             log.error(f"Error connecting to metastore database: {exc}")
             raise
+
         log.info(f"Metastore database '{METASTORE_DB}' missing. Creating it.")
         bootstrap_conn = None
         try:
@@ -52,7 +56,6 @@ def _ensure_metastore_db():
 
 
 def init_metastore_pool(minconn=None, maxconn=None) -> SimpleConnectionPool:
-    """Initialize the connection pool for the metastore."""
     global METASTORE_POOL
     if minconn is None:
         minconn = METASTORE_POOL_MIN
@@ -71,9 +74,12 @@ def init_metastore_pool(minconn=None, maxconn=None) -> SimpleConnectionPool:
                 user=METASTORE_DB_USER,
                 password=METASTORE_DB_PASSWORD,
             )
-            log.info(f"[SEF_HELPER][METASTORE][RDBMS] Metastore connection pool created (min={minconn}, max={maxconn}).")
-        except Exception as e:
-            log.error(f"[SEF_HELPER][METASTORE][RDBMS] Error establishing metastore connection pool: {e}")
+            log.info(
+                f"[SEF_HELPER][METASTORE][RDBMS] Metastore connection pool created "
+                f"(min={minconn}, max={maxconn})."
+            )
+        except Exception as exc:
+            log.error(f"[SEF_HELPER][METASTORE][RDBMS] Error establishing metastore connection pool: {exc}")
             raise
     else:
         log.debug("[SEF_HELPER][METASTORE][RDBMS] Reusing existing metastore connection pool.")
@@ -81,7 +87,6 @@ def init_metastore_pool(minconn=None, maxconn=None) -> SimpleConnectionPool:
 
 
 def get_metastore_connection():
-    """Get a connection from the metastore pool."""
     pool = init_metastore_pool()
     try:
         conn = pool.getconn()
@@ -90,7 +95,6 @@ def get_metastore_connection():
             pool.putconn(conn, close=True)
             conn = pool.getconn()
 
-        # psycopg2 defaults to autocommit=False, which caused metastore writes to stay uncommitted.
         try:
             conn.autocommit = True
         except Exception:
@@ -98,11 +102,12 @@ def get_metastore_connection():
 
         log.debug("[SEF_HELPER][METASTORE][RDBMS] Acquired connection from metastore pool.")
         return conn
-    except Exception as e:
-        msg = str(e)
-        if "connection pool exhausted" in msg.lower():
+    except Exception as exc:
+        if "connection pool exhausted" in str(exc).lower():
             new_max = pool.maxconn + 5
-            log.warning(f"[SEF_HELPER][METASTORE][RDBMS] Metastore connection pool exhausted. Expanding pool to {new_max}.")
+            log.warning(
+                f"[SEF_HELPER][METASTORE][RDBMS] Metastore connection pool exhausted. Expanding pool to {new_max}."
+            )
             try:
                 pool.closeall()
             except Exception:
@@ -115,25 +120,25 @@ def get_metastore_connection():
             except Exception:
                 pass
             return conn
-        log.error(f"[SEF_HELPER][METASTORE][RDBMS] Error getting metastore connection: {e}")
+        log.error(f"[SEF_HELPER][METASTORE][RDBMS] Error getting metastore connection: {exc}")
         raise
 
 
-def release_metastore_connection(conn):
-    """Return a connection back to the metastore pool."""
+def release_metastore_connection(conn) -> None:
     pool = init_metastore_pool()
     try:
         if conn.closed:
             pool.putconn(conn, close=True)
             log.debug("[SEF_HELPER][METASTORE][RDBMS] Closed dead metastore connection from pool.")
-        else:
-            # If anyone ever turned autocommit off and left a transaction open, reset it.
-            try:
-                if not getattr(conn, "autocommit", True):
-                    conn.rollback()
-            except Exception:
-                pass
-            pool.putconn(conn)
-            log.debug("[SEF_HELPER][METASTORE][RDBMS] Released metastore connection back to pool.")
-    except Exception as e:
-        log.error(f"[SEF_HELPER][METASTORE][RDBMS] Error releasing metastore connection: {e}")
+            return
+
+        try:
+            if not getattr(conn, "autocommit", True):
+                conn.rollback()
+        except Exception:
+            pass
+
+        pool.putconn(conn)
+        log.debug("[SEF_HELPER][METASTORE][RDBMS] Released metastore connection back to pool.")
+    except Exception as exc:
+        log.error(f"[SEF_HELPER][METASTORE][RDBMS] Error releasing metastore connection: {exc}")

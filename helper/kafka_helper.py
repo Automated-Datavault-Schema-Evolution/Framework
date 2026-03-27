@@ -35,13 +35,6 @@ def create_producer() -> KafkaProducer:
 
 
 def consume_notification(consumer: KafkaConsumer) -> Iterable[Tuple[Any, Dict[str, Any]]]:
-    """Yield (raw_message, notification_dict) pairs.
-
-    Important behavior:
-      - We poll at most 1 record per iteration.
-      - This prevents advancing in-memory positions far ahead of committed offsets.
-      - In conjunction with commit_offset(message), it guarantees at-least-once per offset.
-    """
     while True:
         polled = consumer.poll(timeout_ms=1000, max_records=1)
         if not polled:
@@ -52,27 +45,20 @@ def consume_notification(consumer: KafkaConsumer) -> Iterable[Tuple[Any, Dict[st
 
 
 def commit_offset(consumer: KafkaConsumer, message: Any) -> None:
-    """Commit precisely the next offset for the given message.
-
-    kafka-python versions differ:
-      - older: OffsetAndMetadata(offset, metadata)
-      - newer: OffsetAndMetadata(offset, metadata, leader_epoch)
-    """
     tp = TopicPartition(message.topic, message.partition)
     next_offset = message.offset + 1
 
-    # metadata should be a string (""), not None, for broad compatibility
+    
     try:
         oam = OffsetAndMetadata(next_offset, "")
     except TypeError:
-        # leader_epoch: use -1 (unknown) which is the conventional sentinel
+        
         oam = OffsetAndMetadata(next_offset, "", -1)
 
     consumer.commit({tp: oam})
 
 
 def rewind_offset(consumer: KafkaConsumer, message: Any) -> None:
-    """Rewind consumer position so the same message is re-read on the next poll."""
     tp = TopicPartition(message.topic, message.partition)
     consumer.seek(tp, message.offset)
 

@@ -1,6 +1,3 @@
-"""Event payload builders for Schema Evolution Framework notifications."""
-
-from __future__ import annotations
 
 from datetime import datetime
 from typing import Any, Dict, List
@@ -9,21 +6,17 @@ from core.model import ChangeContext, ExecutionResult, Plan, PolicyOutcome, Veri
 
 
 def _utc_now_iso() -> str:
-    """Return the current UTC timestamp in ISO-8601 format with a trailing Z."""
     return datetime.utcnow().isoformat() + "Z"
 
 
-
 def _serialize_operations(ops: Any) -> List[Dict[str, Any]]:
-    """Return JSON-safe operation payloads for event emission."""
-    out: List[Dict[str, Any]] = []
-    for op in ops or []:
-        if isinstance(op, dict):
-            out.append(op)
+    output: List[Dict[str, Any]] = []
+    for operation in ops or []:
+        if isinstance(operation, dict):
+            output.append(operation)
         else:
-            out.append({"op": str(op)})
-    return out
-
+            output.append({"op": str(operation)})
+    return output
 
 
 def build_schema_evolved_event(
@@ -34,10 +27,8 @@ def build_schema_evolved_event(
     verification: VerificationResult,
     new_version: int,
 ) -> Dict[str, Any]:
-    """Build the success event published after a verified schema evolution."""
     now = _utc_now_iso()
     execution_ok = bool(execution.get("successful"))
-
     return {
         "event_type": "schema.evolved",
         "dataset": {
@@ -72,7 +63,6 @@ def build_schema_evolved_event(
     }
 
 
-
 def build_success_event(
     context: ChangeContext,
     new_version: int,
@@ -81,7 +71,6 @@ def build_success_event(
     execution: ExecutionResult,
     verification: VerificationResult,
 ) -> Dict[str, Any]:
-    """Build the backward-compatible success event expected by the pipeline."""
     return build_schema_evolved_event(
         context=context,
         policy=policy,
@@ -92,9 +81,7 @@ def build_success_event(
     )
 
 
-
 def build_failure_event(context: Dict[str, Any], reason: str, details: str) -> Dict[str, Any]:
-    """Build the failure event published when policy or verification fails."""
     now = _utc_now_iso()
     return {
         "event_type": "schema.evolution.failed",

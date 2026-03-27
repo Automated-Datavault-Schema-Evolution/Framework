@@ -9,7 +9,6 @@ from handler import lake_handler_client, vault_handler_client
 
 
 def _backoff_sleep(attempt: int) -> None:
-    # attempt is 1-based
     s = min(BACKOFF_MAX_S, BACKOFF_INITIAL_S * (BACKOFF_MULT ** max(0, attempt - 1)))
     time.sleep(s)
 
